@@ -1,0 +1,70 @@
+# === Android Studio / Gradle / Build ===
+.gradle/
+build/
+local.properties
+out/
+.cxx/
+.externalNativeBuild/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+captures/
+*.hprof
+
+# Android Outputs
+*.apk
+*.aab
+output-metadata.json
+
+# === Arduino / C++ Teil ===
+# Standard Build‑Outputs
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.eep
+*.lss
+*.o
+*.d
+*.a
+*.so
+*.so.*
+*.dylib
+
+# Arduino IDE / Plattform
+arduino/
+Arduino/
+AppData/
+*.octb
+*.octb_backup
+project.properties
+
+# Test‑ / Temp‑Verzeichnisse
+test/
+tests/
+tmp/
+temp/
+
+# === IDE / OS / Allgemein ===
+# Windows / macOS
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+
+# Docker / VMs
+.dockerignore
+.dockerenv
+docker-compose.yml
+*.vagrant
+*.vbox
+*.vmdk
+
+# Logging / Caches
+*.log
+*.tmp
+node_modules/
