@@ -223,8 +223,8 @@ fun WaageScreen(
                 if (bluetoothPermissionsGranted) viewModel.requestDeviceConfig()
                 else showBluetoothPermissionDialog = true
             },
-            onSave = { srate, prate, avg, bufsec ->
-                if (bluetoothPermissionsGranted) viewModel.sendDeviceConfig(srate, prate, avg, bufsec)
+            onSave = { srate, prate, avg, bufsec, disphz ->
+                if (bluetoothPermissionsGranted) viewModel.sendDeviceConfig(srate, prate, avg, bufsec, disphz)
                 else showBluetoothPermissionDialog = true
             },
             onReset = {

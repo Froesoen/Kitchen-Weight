@@ -255,26 +255,48 @@ fun DeviceConfigDialog(
     uiState: com.waage.viewmodel.WaageUiState,
     onDismiss: () -> Unit,
     onLoad: () -> Unit,
-    onSave: (sampleRateHz: Int, publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int) -> Unit,
+    onSave: (sampleRateHz: Int, publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) -> Unit,
     onReset: () -> Unit,
     onOpenCalibration: () -> Unit
-){
-    var srateText   by remember(uiState.deviceSampleRateHz)   { mutableStateOf(uiState.deviceSampleRateHz.toString()) }
-    var prateText   by remember(uiState.devicePublishRateHz)   { mutableStateOf(uiState.devicePublishRateHz.toString()) }
-    var avgText     by remember(uiState.deviceAvgSamples)      { mutableStateOf(uiState.deviceAvgSamples.toString()) }
-    var bufsecText  by remember(uiState.deviceOfflineBufferSeconds) { mutableStateOf(uiState.deviceOfflineBufferSeconds.toString()) }
+) {
+    LaunchedEffect(Unit) { onLoad() }
 
-    // Validierungsregeln analog zum ESP
+    var srateText   by remember(uiState.deviceSampleRateHz)          { mutableStateOf(uiState.deviceSampleRateHz.toString()) }
+    var prateText   by remember(uiState.devicePublishRateHz)          { mutableStateOf(uiState.devicePublishRateHz.toString()) }
+    var avgText     by remember(uiState.deviceAvgSamples)             { mutableStateOf(uiState.deviceAvgSamples.toString()) }
+    var bufsecText  by remember(uiState.deviceOfflineBufferSeconds)   { mutableStateOf(uiState.deviceOfflineBufferSeconds.toString()) }
+    var dispHzText  by remember(uiState.deviceDisplayHz)              { mutableStateOf(uiState.deviceDisplayHz.toString()) }
+    var showResetConfirm by remember { mutableStateOf(false) }
+
     val srateVal   = srateText.toIntOrNull()
     val prateVal   = prateText.toIntOrNull()
     val avgVal     = avgText.toIntOrNull()
     val bufsecVal  = bufsecText.toIntOrNull()
+    val dispHzVal  = dispHzText.toIntOrNull()
 
-    val srateOk  = srateVal  != null && srateVal  in 1..20
-    val prateOk  = prateVal  != null && prateVal  in 1..20 && (srateVal == null || prateVal <= srateVal)
-    val avgOk    = avgVal    != null && avgVal    in 1..16
-    val bufsecOk = bufsecVal != null && bufsecVal in 10..3600
-    val allValid = srateOk && prateOk && avgOk && bufsecOk
+    val srateOk   = srateVal  != null && srateVal  in 1..20
+    val prateOk   = prateVal  != null && prateVal  in 1..20 && (srateVal == null || prateVal <= srateVal)
+    val avgOk     = avgVal    != null && avgVal    in 1..16
+    val bufsecOk  = bufsecVal != null && bufsecVal in 10..3600
+    val dispHzOk  = dispHzVal != null && dispHzVal in 1..10
+    val allValid  = srateOk && prateOk && avgOk && bufsecOk && dispHzOk
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Zurücksetzen?") },
+            text = { Text("Die Gerätekonfiguration wird auf Werkseinstellungen zurückgesetzt.") },
+            confirmButton = {
+                Button(
+                    onClick = { onReset(); showResetConfirm = false; onDismiss() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF9A9A), contentColor = Color.Black)
+                ) { Text("Zurücksetzen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) { Text("Abbrechen") }
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -282,7 +304,6 @@ fun DeviceConfigDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-                // Kalibrierungsfaktor – Anzeige + Öffnen des Kalibrierdialogs
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -295,105 +316,75 @@ fun DeviceConfigDialog(
                             fontWeight = FontWeight.Medium
                         )
                     }
-                    TextButton(onClick = onOpenCalibration) {
-                        Text("Kalibrieren", fontSize = 13.sp)
-                    }
+                    TextButton(onClick = onOpenCalibration) { Text("Kalibrieren", fontSize = 13.sp) }
                 }
 
                 HorizontalDivider()
 
                 if (!uiState.deviceConfigLoaded) {
-                    Text(
-                        "Werte noch nicht geladen.\nBitte 'Laden' drücken.",
-                        color = Color.Gray,
-                        fontSize = 13.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text("Lade Gerätekonfiguration…", color = Color.Gray, fontSize = 13.sp)
+                    }
                 }
 
-                // Abtastrate
                 OutlinedTextField(
-                    value = srateText,
-                    onValueChange = { srateText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Abtastrate [Hz]") },
-                    supportingText = { Text("1 – 20 Hz") },
+                    value = srateText, onValueChange = { srateText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Abtastrate [Hz]") }, supportingText = { Text("1 – 20 Hz") },
                     isError = srateText.isNotEmpty() && !srateOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = uiState.deviceConfigLoaded
                 )
 
-                // Senderate
                 OutlinedTextField(
-                    value = prateText,
-                    onValueChange = { prateText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Senderate [Hz]") },
-                    supportingText = { Text("1 – 20 Hz, ≤ Abtastrate") },
+                    value = prateText, onValueChange = { prateText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Senderate [Hz]") }, supportingText = { Text("1 – 20 Hz, ≤ Abtastrate") },
                     isError = prateText.isNotEmpty() && !prateOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = uiState.deviceConfigLoaded
                 )
 
-                // Glättung
                 OutlinedTextField(
-                    value = avgText,
-                    onValueChange = { avgText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Werte für Glättung [-]") },
-                    supportingText = { Text("1 – 16") },
+                    value = avgText, onValueChange = { avgText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Werte für Glättung [-]") }, supportingText = { Text("1 – 16") },
                     isError = avgText.isNotEmpty() && !avgOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = uiState.deviceConfigLoaded
                 )
 
-                // Offline-Puffer
                 OutlinedTextField(
-                    value = bufsecText,
-                    onValueChange = { bufsecText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Offline-Puffer [s]") },
-                    supportingText = { Text("10 – 3600 s") },
+                    value = bufsecText, onValueChange = { bufsecText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Offline-Puffer [s]") }, supportingText = { Text("10 – 3600 s") },
                     isError = bufsecText.isNotEmpty() && !bufsecOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = uiState.deviceConfigLoaded
                 )
 
-                // Berechnete Puffergröße (Info)
+                OutlinedTextField(
+                    value = dispHzText, onValueChange = { dispHzText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Anzeige-Aktualisierung [Hz]") }, supportingText = { Text("1 – 10 Hz") },
+                    isError = dispHzText.isNotEmpty() && !dispHzOk,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = uiState.deviceConfigLoaded
+                )
+
                 if (uiState.deviceConfigLoaded) {
-                    Text(
-                        "Pufferkapazität: ${uiState.deviceOfflineBufferCapacity} Samples",
-                        color = Color.Gray,
-                        fontSize = 12.sp
-                    )
+                    Text("Pufferkapazität: ${uiState.deviceOfflineBufferCapacity} Samples", color = Color.Gray, fontSize = 12.sp)
                 }
             }
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Laden
-                TextButton(onClick = onLoad) { Text("Laden") }
-
-                // Speichern
+                TextButton(onClick = onDismiss) { Text("Abbrechen") }
+                TextButton(onClick = { showResetConfirm = true }, enabled = uiState.deviceConfigLoaded) {
+                    Text("Reset", color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray)
+                }
                 Button(
-                    onClick = {
-                        onSave(srateVal!!, prateVal!!, avgVal!!, bufsecVal!!)
-                    },
+                    onClick = { onSave(srateVal!!, prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!); onDismiss() },
                     enabled = uiState.deviceConfigLoaded && allValid
                 ) { Text("Speichern") }
             }
         },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
-                    onClick = onReset,
-                    enabled = uiState.deviceConfigLoaded
-                ) { Text("Reset", color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray) }
-                TextButton(onClick = onDismiss) { Text("Schließen") }
-            }
-        }
+        dismissButton = {}
     )
 }

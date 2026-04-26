@@ -47,6 +47,7 @@ data class WaageUiState(
     val deviceAvgSamples: Int = 0,
     val deviceOfflineBufferSeconds: Int = 0,
     val deviceOfflineBufferCapacity: Int = 0,
+    val deviceDisplayHz: Int = 2,
     val deviceConfigLoaded: Boolean = false
 )
 
@@ -67,10 +68,13 @@ class WaageViewModel(
 
     init {
         _uiState.value = _uiState.value.copy(
-            selectedRange = settings.selectedTimeRange,
-            alarmUpperG = settings.alarmUpperG,
-            alarmLowerG = settings.alarmLowerG,
-            alarmMuted = settings.alarmMuted
+            deviceSampleRateHz          = msg.sampleRateHz,
+            devicePublishRateHz         = msg.publishRateHz,
+            deviceAvgSamples            = msg.avgSamples,
+            deviceOfflineBufferSeconds  = msg.offlineBufferSeconds,
+            deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
+            deviceDisplayHz             = msg.displayHz,
+            deviceConfigLoaded          = true
         )
         createBluetoothService()
         autoConnectLastDevice()
@@ -350,12 +354,13 @@ class WaageViewModel(
         sampleRateHz: Int,
         publishRateHz: Int,
         avgSamples: Int,
-        offlineBufferSeconds: Int
+        offlineBufferSeconds: Int,
+        displayHz: Int
     ) {
         if (!canUseBluetooth()) return
-        Log.d(TAG, "sendDeviceConfig($sampleRateHz, $publishRateHz, $avgSamples, $offlineBufferSeconds)")
+        Log.d(TAG, "sendDeviceConfig($sampleRateHz, $publishRateHz, $avgSamples, $offlineBufferSeconds, $displayHz)")
         try {
-            service()?.sendSetConfig(sampleRateHz, publishRateHz, avgSamples, offlineBufferSeconds)
+            service()?.sendSetConfig(sampleRateHz, publishRateHz, avgSamples, offlineBufferSeconds, displayHz)
         } catch (e: SecurityException) {
             Log.e(TAG, "sendDeviceConfig failed", e)
         }
