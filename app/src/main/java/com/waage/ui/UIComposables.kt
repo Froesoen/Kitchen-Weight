@@ -96,53 +96,231 @@ private fun StatChip(label: String, value: String) {
 }
 
 @Composable
-fun WeightGraph(samples: List<WeightSample>, selectedRange: TimeRange, alarmUpperG: Float, alarmLowerG: Float, onRangeSelected: (TimeRange) -> Unit, modifier: Modifier = Modifier) {
+fun WeightGraph(
+    samples: List<WeightSample>,
+    selectedRange: TimeRange,
+    stats: WeightBuffer.Stats?,
+    alarmUpperG: Float,
+    alarmLowerG: Float,
+    onRangeSelected: (TimeRange) -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(modifier = modifier) {
         TimeRangeSelector(selected = selectedRange, onSelected = onRangeSelected)
         Spacer(modifier = Modifier.height(8.dp))
+
         if (samples.size >= 2) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(200.dp).padding(horizontal = 8.dp)) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp)
+                    .padding(horizontal = 8.dp)
+            ) {
                 val w = size.width
                 val h = size.height
-                val topLabelY = 28f
-                val bottomLabelY = h - 4f
+
+                val leftPad = 72f
+                val rightPad = 12f
+                val topPad = 12f
+                val bottomPad = 28f
+
+                val plotLeft = leftPad
+                val plotRight = w - rightPad
+                val plotTop = topPad
+                val plotBottom = h - bottomPad
+                val plotWidth = plotRight - plotLeft
+                val plotHeight = plotBottom - plotTop
+
                 val weights = samples.map { it.weightG }
                 var minVal = weights.minOrNull() ?: 0f
                 var maxVal = weights.maxOrNull() ?: 0f
-                val margin = maxOf((maxVal - minVal) * 0.1f, 1f)
-                minVal -= margin; maxVal += margin
-                val range = (maxVal - minVal).takeIf { it != 0f } ?: 1f
-                if (alarmUpperG > 0f && alarmUpperG in minVal..maxVal) {
-                    val y = h - ((alarmUpperG - minVal) / range) * h
-                    drawLine(Color(0xFFF44336), Offset(0f, y), Offset(w, y), 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f)))
+
+                if (alarmLowerG > 0f) minVal = minOf(minVal, alarmLowerG)
+                if (alarmUpperG > 0f) maxVal = maxOf(maxVal, alarmUpperG)
+                stats?.let {
+                    minVal = minOf(minVal, it.avg)
+                    maxVal = maxOf(maxVal, it.avg)
                 }
-                if (alarmLowerG > 0f && alarmLowerG in minVal..maxVal) {
-                    val y = h - ((alarmLowerG - minVal) / range) * h
-                    drawLine(Color(0xFF2196F3), Offset(0f, y), Offset(w, y), 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f)))
+
+                val margin = maxOf((maxVal - minVal) * 0.12f, 1f)
+                minVal -= margin
+                maxVal += margin
+                val range = (maxVal - minVal).takeIf { it > 0f } ?: 1f
+
+                fun yFor(value: Float): Float =
+                    plotBottom - ((value - minVal) / range) * plotHeight
+
+                fun xFor(index: Int): Float =
+                    plotLeft + index.toFloat() / (samples.size - 1).coerceAtLeast(1) * plotWidth
+
+                // Hintergrund Plot
+                drawRect(
+                    color = Color(0xFF1A1A1A),
+                    topLeft = Offset(plotLeft, plotTop),
+                    size = androidx.compose.ui.geometry.Size(plotWidth, plotHeight)
+                )
+
+                // Alarmbereiche
+                if (alarmLowerG > 0f) {
+                    val y = yFor(alarmLowerG)
+                    drawRect(
+                        color = Color(0xFF2196F3).copy(alpha = 0.12f),
+                        topLeft = Offset(plotLeft, y),
+                        size = androidx.compose.ui.geometry.Size(plotWidth, plotBottom - y)
+                    )
                 }
+
+                if (alarmUpperG > 0f) {
+                    val y = yFor(alarmUpperG)
+                    drawRect(
+                        color = Color(0xFFF44336).copy(alpha = 0.12f),
+                        topLeft = Offset(plotLeft, plotTop),
+                        size = androidx.compose.ui.geometry.Size(plotWidth, y - plotTop)
+                    )
+                }
+
+                // Horizontale Gridlines + Y-Labels
+                val gridColor = Color.Gray.copy(alpha = 0.25f)
+                val labelPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.LTGRAY
+                    textSize = 28f
+                    textAlign = android.graphics.Paint.Align.RIGHT
+                    isAntiAlias = true
+                }
+
+                val yTicks = listOf(
+                    maxVal,
+                    maxVal - range * 0.25f,
+                    maxVal - range * 0.5f,
+                    maxVal - range * 0.75f,
+                    minVal
+                )
+
+                yTicks.forEach { value ->
+                    val y = yFor(value)
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(plotLeft, y),
+                        end = Offset(plotRight, y),
+                        strokeWidth = 1f
+                    )
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawText(
+                            formatG(value),
+                            plotLeft - 8f,
+                            y + 8f,
+                            labelPaint
+                        )
+                    }
+                }
+
+                // Null-Linie
                 if (0f in minVal..maxVal) {
-                    val y = h - ((0f - minVal) / range) * h
-                    drawLine(Color.Gray.copy(alpha = 0.4f), Offset(0f, y), Offset(w, y), 1f)
+                    val y = yFor(0f)
+                    drawLine(
+                        color = Color.Gray.copy(alpha = 0.5f),
+                        start = Offset(plotLeft, y),
+                        end = Offset(plotRight, y),
+                        strokeWidth = 1f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+                    )
                 }
+
+                // Alarm-Linien
+                if (alarmUpperG > 0f && alarmUpperG in minVal..maxVal) {
+                    val y = yFor(alarmUpperG)
+                    drawLine(
+                        color = Color(0xFFF44336),
+                        start = Offset(plotLeft, y),
+                        end = Offset(plotRight, y),
+                        strokeWidth = 2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
+                    )
+                }
+
+                if (alarmLowerG > 0f && alarmLowerG in minVal..maxVal) {
+                    val y = yFor(alarmLowerG)
+                    drawLine(
+                        color = Color(0xFF2196F3),
+                        start = Offset(plotLeft, y),
+                        end = Offset(plotRight, y),
+                        strokeWidth = 2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
+                    )
+                }
+
+                // Durchschnittslinie
+                stats?.let {
+                    if (it.avg in minVal..maxVal) {
+                        val y = yFor(it.avg)
+                        drawLine(
+                            color = Color(0xFFFFC107),
+                            start = Offset(plotLeft, y),
+                            end = Offset(plotRight, y),
+                            strokeWidth = 2f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 6f))
+                        )
+                    }
+                }
+
+                // Gewichtskurve
                 val path = Path()
                 samples.forEachIndexed { i, sample ->
-                    val x = i.toFloat() / (samples.size - 1) * w
-                    val y = h - ((sample.weightG - minVal) / range) * h
+                    val x = xFor(i)
+                    val y = yFor(sample.weightG)
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
-                drawPath(path = path, color = Color(0xFF4CAF50), style = Stroke(width = 2.5f))
-                val peakIdx = weights.indices.maxByOrNull { weights[it] } ?: return@Canvas
-                val px = peakIdx.toFloat() / (samples.size - 1) * w
-                val py = h - ((weights[peakIdx] - minVal) / range) * h
-                drawCircle(color = Color(0xFFFFC107), radius = 5f, center = Offset(px, py))
-                val paint = android.graphics.Paint().apply { color = android.graphics.Color.LTGRAY; textSize = 28f; textAlign = android.graphics.Paint.Align.LEFT; isAntiAlias = true }
+                drawPath(
+                    path = path,
+                    color = Color(0xFF4CAF50),
+                    style = Stroke(width = 2.5f)
+                )
+
+                // Letzten Punkt markieren
+                val last = samples.last()
+                drawCircle(
+                    color = Color(0xFF4CAF50),
+                    radius = 5f,
+                    center = Offset(plotRight, yFor(last.weightG))
+                )
+
+                // Plot-Rahmen
+                drawRect(
+                    color = Color.Gray.copy(alpha = 0.35f),
+                    topLeft = Offset(plotLeft, plotTop),
+                    size = androidx.compose.ui.geometry.Size(plotWidth, plotHeight),
+                    style = Stroke(width = 1f)
+                )
+
+                // X-Achsenbeschriftung
+                val xPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.LTGRAY
+                    textSize = 26f
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                }
+
+                val totalSec = selectedRange.seconds
+                fun secLabel(s: Int): String = if (s >= 60) "${s / 60} min" else "${s}s"
+                val leftLabel = "- ${secLabel(totalSec)}"
+                val centerLabel = "- ${secLabel(totalSec / 2)}"
+                val rightLabel = "jetzt"
+
                 drawIntoCanvas { canvas ->
-                    canvas.nativeCanvas.drawText(formatG(maxVal), 4f, topLabelY, paint)
-                    canvas.nativeCanvas.drawText(formatG(minVal), 4f, bottomLabelY, paint)
+                    canvas.nativeCanvas.drawText(leftLabel, plotLeft, h - 4f, xPaint)
+                    canvas.nativeCanvas.drawText(centerLabel, plotLeft + plotWidth / 2f, h - 4f, xPaint)
+                    canvas.nativeCanvas.drawText(rightLabel, plotRight, h - 4f, xPaint)
                 }
             }
         } else {
-            Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { Text("Sammle Daten...", color = Color.Gray) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Sammle Daten...", color = Color.Gray)
+            }
         }
     }
 }

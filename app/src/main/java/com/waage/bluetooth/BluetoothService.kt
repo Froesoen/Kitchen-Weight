@@ -39,7 +39,8 @@ sealed class WaageMessage {
         val publishRateHz: Int,
         val avgSamples: Int,
         val offlineBufferSeconds: Int,
-        val offlineBufferCapacity: Int
+        val offlineBufferCapacity: Int,
+        val displayHz: Int
     ) : WaageMessage()
 }
 
@@ -219,7 +220,8 @@ class BluetoothService(
                         publishRateHz        = obj.optInt("publishRateHz", 0),
                         avgSamples           = obj.optInt("avgSamples", 0),
                         offlineBufferSeconds = obj.optInt("offlineBufferSeconds", 0),
-                        offlineBufferCapacity= obj.optInt("offlineBufferCapacity", 0)
+                        offlineBufferCapacity= obj.optInt("offlineBufferCapacity", 0),
+                        displayHz            = obj.optInt("displayHz", 2)
                     )
                     Log.d(TAG, "parsed config srate=${msg.sampleRateHz} prate=${msg.publishRateHz}")
                     onMessage(msg)
@@ -272,13 +274,14 @@ class BluetoothService(
     fun sendGetBuffer() = send(JSONObject().put("type", "get_buffer"))
     fun sendSync() = send(JSONObject().put("type", "sync").put("unix", System.currentTimeMillis()))
     fun sendGetConfig() = send(JSONObject().put("type", "getconfig"))
-    fun sendSetConfig(sampleRateHz: Int, publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int) =
+    fun sendSetConfig(sampleRateHz: Int, publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) =
         send(JSONObject()
             .put("type", "setconfig")
             .put("sampleRateHz", sampleRateHz)
             .put("publishRateHz", publishRateHz)
             .put("avgSamples", avgSamples)
-            .put("offlineBufferSeconds", offlineBufferSeconds))
+            .put("offlineBufferSeconds", offlineBufferSeconds)
+            .put("displayHz", displayHz))
     fun sendResetConfig() = send(JSONObject().put("type", "resetconfig"))
     fun isConnected(): Boolean = socket?.isConnected == true
 }

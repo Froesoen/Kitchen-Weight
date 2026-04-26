@@ -176,6 +176,7 @@ fun WaageScreen(
             WeightGraph(
                 samples = uiState.graphSamples,
                 selectedRange = uiState.selectedRange,
+                stats = uiState.stats,
                 alarmUpperG = uiState.alarmUpperG,
                 alarmLowerG = uiState.alarmLowerG,
                 onRangeSelected = { viewModel.setTimeRange(it) },
@@ -223,8 +224,8 @@ fun WaageScreen(
                 if (bluetoothPermissionsGranted) viewModel.requestDeviceConfig()
                 else showBluetoothPermissionDialog = true
             },
-            onSave = { srate, prate, avg, bufsec ->
-                if (bluetoothPermissionsGranted) viewModel.sendDeviceConfig(srate, prate, avg, bufsec)
+            onSave = { srate, prate, avg, bufsec, disphz ->
+                if (bluetoothPermissionsGranted) viewModel.sendDeviceConfig(srate, prate, avg, bufsec, disphz)
                 else showBluetoothPermissionDialog = true
             },
             onReset = {
