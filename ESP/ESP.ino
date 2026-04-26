@@ -438,7 +438,7 @@ void measureTask(void* param) {
             if (scale.is_ready()) {
                 float w = scale.get_units(config.avgSamples);
                 SampleSnapshot s{ w, millis(), timeOffset != 0 };
-                xQueueOverwrite(sampleQueue, &s);
+                xQueueSend(sampleQueue, &s, 0);
             }
         }
 
