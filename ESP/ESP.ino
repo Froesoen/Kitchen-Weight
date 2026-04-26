@@ -17,25 +17,28 @@
 #define NVS_KEY_PRATE   "prate"
 #define NVS_KEY_AVG     "avg"
 #define NVS_KEY_BUFSEC  "bufsec"
+#define NVS_KEY_DISPHZ  "disphz"        // NEU
 
-constexpr uint16_t DEFAULT_SAMPLE_RATE_HZ          = 2;
-constexpr uint16_t DEFAULT_PUBLISH_RATE_HZ          = 2;
-constexpr uint8_t  DEFAULT_AVG_SAMPLES              = 4;
-constexpr uint16_t DEFAULT_OFFLINE_BUFFER_SECONDS   = 60;
-constexpr uint16_t MAX_OFFLINE_BUFFER               = 3600;
-constexpr uint8_t  DISPLAY_WIDTH                    = 128;
-constexpr uint8_t  DISPLAY_HEIGHT                   = 64;
-constexpr uint8_t  VALUE_HEIGHT                     = 20;
-constexpr uint8_t  PLOT_HEIGHT = DISPLAY_HEIGHT - VALUE_HEIGHT;
-constexpr uint8_t  PLOT_Y_TOP  = VALUE_HEIGHT;
+constexpr uint16_t DEFAULT_SAMPLE_RATE_HZ        = 2;
+constexpr uint16_t DEFAULT_PUBLISH_RATE_HZ       = 2;
+constexpr uint8_t  DEFAULT_AVG_SAMPLES           = 4;
+constexpr uint16_t DEFAULT_OFFLINE_BUFFER_SECONDS = 60;
+constexpr uint8_t  DEFAULT_DISPLAY_HZ            = 2;  // NEU
+constexpr uint16_t MAX_OFFLINE_BUFFER            = 3600;
+constexpr uint8_t  DISPLAY_WIDTH                 = 128;
+constexpr uint8_t  DISPLAY_HEIGHT                = 64;
+constexpr uint8_t  VALUE_HEIGHT                  = 20;
+constexpr uint8_t  PLOT_HEIGHT  = DISPLAY_HEIGHT - VALUE_HEIGHT;
+constexpr uint8_t  PLOT_Y_TOP   = VALUE_HEIGHT;
 constexpr uint8_t  PLOT_Y_BOTTOM = DISPLAY_HEIGHT - 1;
-constexpr uint8_t  DISP_HIST   = 128;
+constexpr uint8_t  DISP_HIST    = 128;
 
 struct DeviceConfig {
     uint16_t sampleRateHz;
     uint16_t publishRateHz;
     uint8_t  avgSamples;
     uint16_t offlineBufferSeconds;
+    uint8_t  displayHz;   // NEU
 };
 
 struct SampleSnapshot {
@@ -53,10 +56,10 @@ struct ScaleCommand {
 };
 
 struct ScaleResult {
-    bool ok;
-    char type[16];
+    bool  ok;
+    char  type[16];
     float value;
-    char msg[48];
+    char  msg[48];
 };
 
 struct OfflineSample {
@@ -66,42 +69,42 @@ struct OfflineSample {
 };
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
-HX711            scale;
-BluetoothSerial  BT;
-Preferences      prefs;
+HX711          scale;
+BluetoothSerial BT;
+Preferences    prefs;
 
 DeviceConfig     config;
-float            calibrationFactor  = 1.0f;
-volatile uint32_t samplePeriodMs    = 500;
-volatile uint32_t publishPeriodMs   = 500;
-uint16_t         offlineBufferCapacity = 120;
+float            calibrationFactor = 1.0f;
+volatile uint32_t samplePeriodMs  = 500;
+volatile uint32_t publishPeriodMs = 500;
+volatile uint32_t displayPeriodMs = 500;  // NEU
+uint8_t           displayMode     = 1;    // NEU: 0=nur Gewicht, 1=mit Verlauf
+uint16_t          offlineBufferCapacity = 120;
 
 QueueHandle_t sampleQueue      = nullptr;
 QueueHandle_t scaleCmdQueue    = nullptr;
 QueueHandle_t scaleResultQueue = nullptr;
 
-float    currentWeight       = 0.0f;
-int64_t  currentWeightTs     = 0;
-bool     currentWeightSynced = false;
+float   currentWeight       = 0.0f;
+int64_t currentWeightTs     = 0;
+bool    currentWeightSynced = false;
 
 volatile bool    btConnected = false;
 volatile int64_t timeOffset  = 0;
 
 OfflineSample offlineBuffer[MAX_OFFLINE_BUFFER];
-uint16_t      offlineWriteIdx = 0;   // Ind_f: nächste Schreibposition
-uint16_t      offlineSendIdx  = 0;   // Ind_s: nächste Sendeposition
+uint16_t      offlineWriteIdx = 0;
+uint16_t      offlineSendIdx  = 0;
 
 float   dispHist[DISP_HIST] = {};
 uint8_t dispHistIdx  = 0;
 uint8_t dispHistFill = 0;
 
-bool     lastBtnState  = HIGH;
-uint32_t btnPressedAt  = 0;
+bool     lastBtnState = HIGH;
+uint32_t btnPressedAt = 0;
 
-bool displayTaskStarted = false;
-bool measureTaskStarted = false;
-
-// ── NVS ────────────────────────────────────────────────────────────────────
+bool displayTaskStarted  = false;
+bool measureTaskStarted  = false;
 
 float loadFactor() {
     prefs.begin(NVS_NAMESPACE, true);
@@ -122,55 +125,59 @@ void applyDerivedConfig() {
     if (config.publishRateHz > config.sampleRateHz)
         config.publishRateHz = config.sampleRateHz;
 
-    samplePeriodMs  = 1000UL / config.sampleRateHz;
-    publishPeriodMs = 1000UL / config.publishRateHz;
+    samplePeriodMs  = 1000UL / (uint32_t)config.sampleRateHz;
+    publishPeriodMs = 1000UL / (uint32_t)config.publishRateHz;
     if (samplePeriodMs  < 1) samplePeriodMs  = 1;
     if (publishPeriodMs < 1) publishPeriodMs = 1;
 
+    // NEU: Display-Periode
+    uint8_t dHz = config.displayHz;
+    if (dHz < 1)  dHz = 1;
+    if (dHz > 10) dHz = 10;
+    displayPeriodMs = 1000UL / dHz;
+
     uint32_t cap = (uint32_t)config.sampleRateHz
-                 * (uint32_t)config.offlineBufferSeconds;
-    if (cap < 1)                cap = 1;
+                   * (uint32_t)config.offlineBufferSeconds;
+    if (cap < 1) cap = 1;
     if (cap > MAX_OFFLINE_BUFFER) cap = MAX_OFFLINE_BUFFER;
     offlineBufferCapacity = (uint16_t)cap;
-
-    // Bei Kapazitätswechsel: Indices zurücksetzen wenn außerhalb
-    if (offlineWriteIdx >= offlineBufferCapacity ||
-        offlineSendIdx  >= offlineBufferCapacity) {
-        offlineWriteIdx = 0;
-        offlineSendIdx  = 0;
-    }
 }
 
 bool validateConfig(const DeviceConfig& c, String& err) {
     if (c.sampleRateHz  < 1 || c.sampleRateHz  > 20)
-        { err = "sampleRateHz out of range";  return false; }
+    { err = "sampleRateHz out of range";            return false; }
     if (c.publishRateHz < 1 || c.publishRateHz > 20)
-        { err = "publishRateHz out of range"; return false; }
+    { err = "publishRateHz out of range";           return false; }
     if (c.publishRateHz > c.sampleRateHz)
-        { err = "publishRateHz must be <= sampleRateHz"; return false; }
+    { err = "publishRateHz must be <= sampleRateHz"; return false; }
     if (c.avgSamples < 1 || c.avgSamples > 16)
-        { err = "avgSamples out of range"; return false; }
+    { err = "avgSamples out of range";              return false; }
     if (c.offlineBufferSeconds < 10 || c.offlineBufferSeconds > 3600)
-        { err = "offlineBufferSeconds out of range"; return false; }
+    { err = "offlineBufferSeconds out of range";    return false; }
+    if (c.displayHz < 1 || c.displayHz > 10)
+    { err = "displayHz out of range";               return false; }  // NEU
     uint32_t cap = (uint32_t)c.sampleRateHz * (uint32_t)c.offlineBufferSeconds;
     if (cap > MAX_OFFLINE_BUFFER)
-        { err = "offline buffer too large"; return false; }
+    { err = "offline buffer too large";             return false; }
     return true;
 }
 
 void loadConfig() {
     prefs.begin(NVS_NAMESPACE, false);
     if (!prefs.isKey(NVS_KEY_INIT)) {
-        prefs.putBool(NVS_KEY_INIT,   true);
+        prefs.putBool  (NVS_KEY_INIT,   true);
         prefs.putUShort(NVS_KEY_SRATE,  DEFAULT_SAMPLE_RATE_HZ);
         prefs.putUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
         prefs.putUChar (NVS_KEY_AVG,    DEFAULT_AVG_SAMPLES);
         prefs.putUShort(NVS_KEY_BUFSEC, DEFAULT_OFFLINE_BUFFER_SECONDS);
+        prefs.putUChar (NVS_KEY_DISPHZ, DEFAULT_DISPLAY_HZ);  // NEU
     }
-    config.sampleRateHz          = prefs.getUShort(NVS_KEY_SRATE,  DEFAULT_SAMPLE_RATE_HZ);
-    config.publishRateHz         = prefs.getUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
-    config.avgSamples            = prefs.getUChar (NVS_KEY_AVG,    DEFAULT_AVG_SAMPLES);
-    config.offlineBufferSeconds  = prefs.getUShort(NVS_KEY_BUFSEC, DEFAULT_OFFLINE_BUFFER_SECONDS);
+    config.sampleRateHz         = prefs.getUShort(NVS_KEY_SRATE,  DEFAULT_SAMPLE_RATE_HZ);
+    config.publishRateHz        = prefs.getUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
+    config.avgSamples           = prefs.getUChar (NVS_KEY_AVG,    DEFAULT_AVG_SAMPLES);
+    config.offlineBufferSeconds = prefs.getUShort(NVS_KEY_BUFSEC, DEFAULT_OFFLINE_BUFFER_SECONDS);
+    config.displayHz            = prefs.getUChar (NVS_KEY_DISPHZ, DEFAULT_DISPLAY_HZ);  // NEU
+    displayMode = prefs.getUChar("dispmode", 1);  // NEU: lokal, nicht in DeviceConfig
     prefs.end();
     applyDerivedConfig();
 }
@@ -182,11 +189,10 @@ bool saveConfig(const DeviceConfig& c) {
     ok &= prefs.putUShort(NVS_KEY_PRATE,  c.publishRateHz)        > 0;
     ok &= prefs.putUChar (NVS_KEY_AVG,    c.avgSamples)           > 0;
     ok &= prefs.putUShort(NVS_KEY_BUFSEC, c.offlineBufferSeconds) > 0;
+    ok &= prefs.putUChar (NVS_KEY_DISPHZ, c.displayHz)            > 0;  // NEU
     prefs.end();
     return ok;
 }
-
-// ── Bluetooth Senden ────────────────────────────────────────────────────────
 
 void btSend(const String& s) {
     if (btConnected) BT.print(s);
@@ -207,27 +213,28 @@ void sendError(const char* msg) {
 }
 
 void sendConfig(const char* typeName = "config") {
-    StaticJsonDocument<192> d;
+    StaticJsonDocument<224> d;      // NEU: etwas größer für displayHz
     d["type"]                  = typeName;
     d["sampleRateHz"]          = config.sampleRateHz;
     d["publishRateHz"]         = config.publishRateHz;
     d["avgSamples"]            = config.avgSamples;
     d["offlineBufferSeconds"]  = config.offlineBufferSeconds;
     d["offlineBufferCapacity"] = offlineBufferCapacity;
+    d["displayHz"]             = config.displayHz;  // NEU
     btSendJson(d);
 }
 
-// ── Display ─────────────────────────────────────────────────────────────────
+// ── Display ──────────────────────────────────────────────────────────────────
 
 uint8_t toPixel(float v, float lo, float hi) {
     if (hi <= lo) return PLOT_Y_BOTTOM;
     float r = (v - lo) / (hi - lo);
     return (uint8_t)constrain(
-        (int)(PLOT_Y_BOTTOM - r * PLOT_HEIGHT),
-        (int)PLOT_Y_TOP, (int)PLOT_Y_BOTTOM);
+            (int)(PLOT_Y_BOTTOM - r * PLOT_HEIGHT),
+            (int)PLOT_Y_TOP, (int)PLOT_Y_BOTTOM);
 }
 
-// ── Kommando-Handler ────────────────────────────────────────────────────────
+// ── Kommando-Handler ─────────────────────────────────────────────────────────
 
 void handleCommand(const String& json) {
     StaticJsonDocument<256> doc;
@@ -245,7 +252,7 @@ void handleCommand(const String& json) {
         float known = doc["weight"] | 0.0f;
         if (known <= 0.0f) { sendError("Gewicht ungueltig"); return; }
         ScaleCommand cmd{};
-        cmd.type        = ScaleCommandType::Calibrate;
+        cmd.type         = ScaleCommandType::Calibrate;
         cmd.knownWeightG = known;
         xQueueSend(scaleCmdQueue, &cmd, 0);
         return;
@@ -265,11 +272,12 @@ void handleCommand(const String& json) {
     }
 
     if (strcmp(type, "setconfig") == 0) {
-        DeviceConfig next    = config;
-        next.sampleRateHz    = doc["sampleRateHz"]         | config.sampleRateHz;
-        next.publishRateHz   = doc["publishRateHz"]        | config.publishRateHz;
-        next.avgSamples      = doc["avgSamples"]           | config.avgSamples;
+        DeviceConfig next         = config;
+        next.sampleRateHz         = doc["sampleRateHz"]         | config.sampleRateHz;
+        next.publishRateHz        = doc["publishRateHz"]        | config.publishRateHz;
+        next.avgSamples           = doc["avgSamples"]           | config.avgSamples;
         next.offlineBufferSeconds = doc["offlineBufferSeconds"] | config.offlineBufferSeconds;
+        next.displayHz            = doc["displayHz"]            | config.displayHz;  // NEU
         String err;
         if (!validateConfig(next, err)) { sendError(err.c_str()); return; }
         ScaleCommand cmd{};
@@ -282,8 +290,10 @@ void handleCommand(const String& json) {
     if (strcmp(type, "resetconfig") == 0) {
         ScaleCommand cmd{};
         cmd.type      = ScaleCommandType::ApplyConfig;
+        // NEU: displayHz im Initializer ergänzt
         cmd.newConfig = { DEFAULT_SAMPLE_RATE_HZ, DEFAULT_PUBLISH_RATE_HZ,
-                          DEFAULT_AVG_SAMPLES, DEFAULT_OFFLINE_BUFFER_SECONDS };
+                          DEFAULT_AVG_SAMPLES, DEFAULT_OFFLINE_BUFFER_SECONDS,
+                          DEFAULT_DISPLAY_HZ };
         xQueueSend(scaleCmdQueue, &cmd, 0);
         return;
     }
@@ -364,7 +374,7 @@ void measureTask(void* param) {
 void btDisplayTask(void* param) {
     if (!displayTaskStarted) displayTaskStarted = true;
 
-    String   inBuf       = "";
+    String   inBuf      = "";
     uint32_t lastDisplay = 0;
     uint32_t lastPublish = 0;
 
@@ -374,35 +384,38 @@ void btDisplayTask(void* param) {
         // ── Button ───────────────────────────────────────────────────────────
         bool btn = digitalRead(BUTTON_PIN);
         if (lastBtnState == HIGH && btn == LOW) btnPressedAt = now;
-        if (lastBtnState == LOW  && btn == HIGH && now - btnPressedAt > 50) {
-            ScaleCommand cmd{};
-            cmd.type = ScaleCommandType::Tare;
-            xQueueSend(scaleCmdQueue, &cmd, 0);
+        if (lastBtnState == LOW  && btn == HIGH) {
+            uint32_t held = now - btnPressedAt;
+            if (held >= 1000) {
+                // Langer Druck: displayMode umschalten
+                displayMode = (displayMode == 0) ? 1 : 0;
+                prefs.begin(NVS_NAMESPACE, false);
+                prefs.putUChar("dispmode", displayMode);
+                prefs.end();
+            } else if (held > 50) {
+                // Kurzer Druck: Tara
+                ScaleCommand cmd{};
+                cmd.type = ScaleCommandType::Tare;
+                xQueueSend(scaleCmdQueue, &cmd, 0);
+            }
         }
         lastBtnState = btn;
 
-        // ── Samples aus measureTask übernehmen ───────────────────────────────
+        // ── Samples übernehmen ───────────────────────────────────────────────
         SampleSnapshot snap;
         while (xQueueReceive(sampleQueue, &snap, 0) == pdTRUE) {
             currentWeight       = snap.weight;
             currentWeightTs     = timeOffset + (int64_t)snap.sampleMs;
             currentWeightSynced = snap.timeSynced;
 
-            // Display-History
             dispHist[dispHistIdx] = snap.weight;
             dispHistIdx = (dispHistIdx + 1) % DISP_HIST;
             if (dispHistFill < DISP_HIST) dispHistFill++;
 
-            // In Ringpuffer schreiben
-            offlineBuffer[offlineWriteIdx] = {
-                currentWeightTs, snap.weight, snap.timeSynced
-            };
+            offlineBuffer[offlineWriteIdx] = { currentWeightTs, snap.weight, snap.timeSynced };
             offlineWriteIdx = (offlineWriteIdx + 1) % offlineBufferCapacity;
-
-            // Sendeindex nachziehen wenn Schreibindex ihn überholt hat
-            if (offlineWriteIdx == offlineSendIdx) {
+            if (offlineWriteIdx == offlineSendIdx)
                 offlineSendIdx = (offlineSendIdx + 1) % offlineBufferCapacity;
-            }
         }
 
         // ── ScaleResults verarbeiten ─────────────────────────────────────────
@@ -428,17 +441,10 @@ void btDisplayTask(void* param) {
         // ── Batch senden ─────────────────────────────────────────────────────
         if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
-
-            // Schreibindex einfrieren – neue Samples während des Sendens
-            // werden erst beim nächsten Intervall mitgeschickt
             uint16_t snapHead = offlineWriteIdx;
-
             if (snapHead != offlineSendIdx) {
-                // Anzahl zu sendender Samples berechnen
                 uint16_t count = (snapHead + offlineBufferCapacity
                                   - offlineSendIdx) % offlineBufferCapacity;
-
-                // JSON manuell aufbauen um Stack-Overflow zu vermeiden
                 String msg = "{\"type\":\"measurement_batch\",\"samples\":[";
                 uint16_t idx = offlineSendIdx;
                 for (uint16_t i = 0; i < count; i++) {
@@ -452,7 +458,6 @@ void btDisplayTask(void* param) {
                 }
                 msg += "]}\n";
                 btSend(msg);
-
                 offlineSendIdx = snapHead;
             }
         }
@@ -462,10 +467,7 @@ void btDisplayTask(void* param) {
             while (BT.available()) {
                 char c = BT.read();
                 if (c == '\n') {
-                    if (inBuf.length() > 0) {
-                        handleCommand(inBuf);
-                        inBuf = "";
-                    }
+                    if (inBuf.length() > 0) { handleCommand(inBuf); inBuf = ""; }
                 } else if (c != '\r') {
                     inBuf += c;
                     if (inBuf.length() > 512) inBuf = "";
@@ -474,10 +476,9 @@ void btDisplayTask(void* param) {
         }
 
         // ── Display ───────────────────────────────────────────────────────────
-        if (now - lastDisplay >= 50) {
+        if ((uint32_t)(now - lastDisplay) >= displayPeriodMs) {  // NEU: displayPeriodMs
             lastDisplay = now;
             u8g2.clearBuffer();
-            u8g2.setFont(u8g2_font_9x15B_tf);
 
             char buf[24];
             if (currentWeight >= 1000.0f || currentWeight <= -1000.0f)
@@ -485,33 +486,48 @@ void btDisplayTask(void* param) {
             else
                 snprintf(buf, sizeof(buf), "%.1f g",  currentWeight);
 
-            uint8_t tw = u8g2.getStrWidth(buf);
-            u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, VALUE_HEIGHT - 3, buf);
+            if (displayMode == 0) {
+                // ── Mode 0: nur großes Gewicht, vertikal zentriert ───────────
+                u8g2.setFont(u8g2_font_10x20_tf);
+                uint8_t tw = u8g2.getStrWidth(buf);
+                u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, 42, buf);
 
-            if      (btConnected && timeOffset != 0) u8g2.drawDisc  (124, 4, 3);
-            else if (btConnected)                    u8g2.drawCircle(124, 4, 3);
-            else                                     u8g2.drawFrame (120, 1, 7, 7);
+                if      (btConnected && timeOffset != 0) u8g2.drawDisc  (124, 4, 3);
+                else if (btConnected)                    u8g2.drawCircle(124, 4, 3);
+                else                                     u8g2.drawFrame (120, 1, 7, 7);
 
-            u8g2.drawHLine(0, VALUE_HEIGHT, DISPLAY_WIDTH);
+            } else {
+                // ── Mode 1: Gewicht oben + Verlauf unten (wie bisher) ────────
+                u8g2.setFont(u8g2_font_9x15B_tf);
+                uint8_t tw = u8g2.getStrWidth(buf);
+                u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, VALUE_HEIGHT - 3, buf);
 
-            if (dispHistFill >= 2) {
-                float lo = 1e9f, hi = -1e9f;
-                for (uint8_t i = 0; i < dispHistFill; i++) {
-                    uint8_t hi_idx = (dispHistIdx + DISP_HIST - dispHistFill + i) % DISP_HIST;
-                    lo = min(lo, dispHist[hi_idx]);
-                    hi = max(hi, dispHist[hi_idx]);
+                if      (btConnected && timeOffset != 0) u8g2.drawDisc  (124, 4, 3);
+                else if (btConnected)                    u8g2.drawCircle(124, 4, 3);
+                else                                     u8g2.drawFrame (120, 1, 7, 7);
+
+                u8g2.drawHLine(0, VALUE_HEIGHT, DISPLAY_WIDTH);
+
+                if (dispHistFill >= 2) {
+                    float lo = 1e9f, hi = -1e9f;
+                    for (uint8_t i = 0; i < dispHistFill; i++) {
+                        uint8_t idx = (dispHistIdx + DISP_HIST - dispHistFill + i) % DISP_HIST;
+                        lo = min(lo, dispHist[idx]);
+                        hi = max(hi, dispHist[idx]);
+                    }
+                    float mg = max((hi - lo) * 0.1f, 1.0f);
+                    lo -= mg; hi += mg;
+
+                    uint8_t dc = (uint8_t)min((int)DISPLAY_WIDTH, (int)dispHistFill);
+                    for (uint8_t x = 1; x < dc; x++) {
+                        uint8_t i0 = (dispHistIdx + DISP_HIST - dc + x - 1) % DISP_HIST;
+                        uint8_t i1 = (dispHistIdx + DISP_HIST - dc + x)     % DISP_HIST;
+                        u8g2.drawLine(x - 1, toPixel(dispHist[i0], lo, hi),
+                                      x,     toPixel(dispHist[i1], lo, hi));
+                    }
                 }
-                float mg = max((hi - lo) * 0.1f, 1.0f);
-                lo -= mg; hi += mg;
+            }  // Ende displayMode
 
-                uint8_t dc = (uint8_t)min((int)DISPLAY_WIDTH, (int)dispHistFill);
-                for (uint8_t x = 1; x < dc; x++) {
-                    uint8_t i0 = (dispHistIdx + DISP_HIST - dc + x - 1) % DISP_HIST;
-                    uint8_t i1 = (dispHistIdx + DISP_HIST - dc + x)     % DISP_HIST;
-                    u8g2.drawLine(x - 1, toPixel(dispHist[i0], lo, hi),
-                                  x,     toPixel(dispHist[i1], lo, hi));
-                }
-            }
             u8g2.sendBuffer();
         }
 
@@ -536,15 +552,13 @@ void setup() {
     scale.begin(HX711_DOUT, HX711_SCK);
 
     uint32_t t = millis() + 3000;
-    while (!scale.is_ready() && millis() < t) {
-        delay(200);
-    }
+    while (!scale.is_ready() && millis() < t) delay(200);
     if (!scale.is_ready()) {
         while (true) delay(1000);
     }
 
     scale.tare();
-    scale.set_scale(calibrationFactor);  // geladenen Faktor anwenden
+    scale.set_scale(calibrationFactor);
 
     offlineWriteIdx = 0;
     offlineSendIdx  = 0;
@@ -558,20 +572,16 @@ void setup() {
     }
 
     BT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t*) {
-        if (event == ESP_SPP_SRV_OPEN_EVT) {
-            btConnected = true;
-        } else if (event == ESP_SPP_CLOSE_EVT) {
-            btConnected = false;
-            timeOffset  = 0;
-        }
+        if      (event == ESP_SPP_SRV_OPEN_EVT) { btConnected = true; }
+        else if (event == ESP_SPP_CLOSE_EVT)    { btConnected = false; timeOffset = 0; }
     });
 
     if (!BT.begin(BT_DEVICE_NAME)) {
         while (true) delay(1000);
     }
 
-    xTaskCreatePinnedToCore(measureTask,   "Messen",      4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(btDisplayTask, "BT+Display",  8192, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(measureTask,   "Messen",     4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(btDisplayTask, "BT+Display", 8192, NULL, 1, NULL, 0);
 }
 
 void loop() {

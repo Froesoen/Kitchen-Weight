@@ -68,13 +68,10 @@ class WaageViewModel(
 
     init {
         _uiState.value = _uiState.value.copy(
-            deviceSampleRateHz          = msg.sampleRateHz,
-            devicePublishRateHz         = msg.publishRateHz,
-            deviceAvgSamples            = msg.avgSamples,
-            deviceOfflineBufferSeconds  = msg.offlineBufferSeconds,
-            deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
-            deviceDisplayHz             = msg.displayHz,
-            deviceConfigLoaded          = true
+            selectedRange = settings.selectedTimeRange,
+            alarmUpperG   = settings.alarmUpperG,
+            alarmLowerG   = settings.alarmLowerG,
+            alarmMuted    = settings.alarmMuted
         )
         createBluetoothService()
         autoConnectLastDevice()
@@ -214,9 +211,10 @@ class WaageViewModel(
                         deviceAvgSamples            = msg.avgSamples,
                         deviceOfflineBufferSeconds  = msg.offlineBufferSeconds,
                         deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
+                        deviceDisplayHz             = msg.displayHz,
                         deviceConfigLoaded          = true
                     )
-                    Log.d(TAG, "config received srate=${msg.sampleRateHz} prate=${msg.publishRateHz}")
+                    Log.d(TAG, "config received srate=${msg.sampleRateHz} prate=${msg.publishRateHz} disphz=${msg.displayHz}")
                 }
 
                 is WaageMessage.Error -> {
