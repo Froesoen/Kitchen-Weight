@@ -280,33 +280,35 @@ fun DeviceConfigDialog(
         confirmButton = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onDismiss) {
-                    Text("Abbrechen")
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Abbr.", maxLines = 1)
                 }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = { showResetConfirm = true },
-                        enabled = uiState.deviceConfigLoaded
-                    ) {
-                        Text(
-                            "Reset",
-                            color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            onSave(prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!)
-                            onDismiss()
-                        },
-                        enabled = uiState.deviceConfigLoaded && allValid
-                    ) {
-                        Text("Speichern")
-                    }
+                TextButton(
+                    onClick = { showResetConfirm = true },
+                    enabled = uiState.deviceConfigLoaded,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Reset",
+                        maxLines = 1,
+                        color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray
+                    )
+                }
+                Button(
+                    onClick = {
+                        onSave(prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!)
+                        onDismiss()
+                    },
+                    enabled = uiState.deviceConfigLoaded && allValid,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("OK", maxLines = 1)
                 }
             }
         },
