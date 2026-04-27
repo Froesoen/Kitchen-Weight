@@ -289,14 +289,15 @@ void sendError(const char* msg) {
 }
 
 void sendConfig(const char* typeName = "config") {
-    StaticJsonDocument<224> d;
+    StaticJsonDocument<256> d;
     d["type"]                  = typeName;
-    d["sampleRateHz"]          = SAMPLE_RATE_HZ;   // Info-only, read-only
+    d["sampleRateHz"]          = SAMPLE_RATE_HZ;
     d["publishRateHz"]         = config.publishRateHz;
     d["avgSamples"]            = config.avgSamples;
     d["offlineBufferSeconds"]  = config.offlineBufferSeconds;
     d["offlineBufferCapacity"] = offlineBufferCapacity;
     d["displayHz"]             = config.displayHz;
+    d["calibrationFactor"]     = calibrationFactor; 
     btSendJson(d);
 }
 
