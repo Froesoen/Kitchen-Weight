@@ -265,7 +265,12 @@ class WaageViewModel(
                         deviceOfflineBufferSeconds = msg.offlineBufferSeconds,
                         deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
                         deviceDisplayHz = msg.displayHz,
-                        deviceConfigLoaded = true
+                        deviceConfigLoaded = true,
+                        // Faktor nur übernehmen wenn ESP ihn mitgeschickt hat (> 0)
+                        calibrationFactor = if (msg.calibrationFactor > 0f)
+                            msg.calibrationFactor
+                        else
+                            _uiState.value.calibrationFactor
                     )
                 }
 
