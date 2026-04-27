@@ -220,6 +220,7 @@ class BluetoothService(
 
                 "config", "config_saved" -> {
                     onMessage(
+                        // NACHHER
                         WaageMessage.Config(
                             sampleRateHz = obj.optInt("sampleRateHz", 20),
                             publishRateHz = obj.optInt("publishRateHz", 2),
@@ -227,8 +228,9 @@ class BluetoothService(
                             offlineBufferSeconds = obj.optInt("offlineBufferSeconds", 60),
                             offlineBufferCapacity = obj.optInt("offlineBufferCapacity", 1200),
                             displayHz = obj.optInt("displayHz", 2),
-                            calibrationFactor = obj.optDouble("calibrationFactor", -1.0).toFloat()  // ← NEU
+                            calibrationFactor = obj.optDouble("calibrationFactor", -1.0).toFloat(),
                         )
+                    )
                 }
 
                 "error" -> {

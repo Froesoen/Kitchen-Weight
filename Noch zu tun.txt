@@ -1,0 +1,43 @@
+Untersuchungen
+- Kalibrierprozess präzise aufnehmen
+- HX711 auf 80Hz umbauen und testen
+
+Bugfixes
+- Verlaufsanzeige in der App wieder mit aufnehmen
+	- Achsenbeschriftung
+	- Einfärbung je nach Schwellwert
+	
+- Kalibrierdialog
+	- Beim Laden letzte Kalibrierung abrufen (wie Konfig-Dialog)
+	- OK statt speichern
+	
+- FFT-Spektrum nur bei Mindestamplitude von 2g
+	
+- Icon mit Transparenz	
+
+- In Dialogen Text durch Icons ersetzen
+
+Erweiterungen / Verbesserungen
+
+- Intern mit 40Hz messen, um mehr Werte für Mittelung zu haben
+
+- Tongeber an ESP
+	- Schwellwert aus App vorgegeben
+	- Piep, wenn erreicht
+
+3 Wägezellen
+- Bauen und Grundlagentest
+
+- Zielbereich überlegen als Alternative zu Alarmen
+
+
+
+	
+
+
+
+
+
+	
+	
+	
