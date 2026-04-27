@@ -49,7 +49,8 @@ sealed class WaageMessage {
         val avgSamples: Int,
         val offlineBufferSeconds: Int,
         val offlineBufferCapacity: Int,
-        val displayHz: Int
+        val displayHz: Int,
+        val calibrationFactor: Float = -1f   // ← NEU; -1 = nicht enthalten
     ) : WaageMessage()
 }
 
@@ -225,9 +226,9 @@ class BluetoothService(
                             avgSamples = obj.optInt("avgSamples", 2),
                             offlineBufferSeconds = obj.optInt("offlineBufferSeconds", 60),
                             offlineBufferCapacity = obj.optInt("offlineBufferCapacity", 1200),
-                            displayHz = obj.optInt("displayHz", 2)
+                            displayHz = obj.optInt("displayHz", 2),
+                            calibrationFactor = obj.optDouble("calibrationFactor", -1.0).toFloat()  // ← NEU
                         )
-                    )
                 }
 
                 "error" -> {
