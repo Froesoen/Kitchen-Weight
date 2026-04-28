@@ -274,6 +274,7 @@ fun WaageScreen(
         CalibrationDialog(
             calibrationFactor = uiState.calibrationFactor,
             onDismiss         = { showCalibration = false },
+            onLoad            = { viewModel.requestDeviceConfig() },
             onTare            = {
                 if (bluetoothPermissionsGranted) viewModel.sendTare()
                 else showBluetoothPermissionDialog = true
