@@ -301,9 +301,9 @@ class WaageViewModel(
 			val disconnected = state is ConnectionState.Disconnected ||
 							   state is ConnectionState.Error
 			_uiState.value = _uiState.value.copy(
-				weightColor    = color,
-				alarmActive    = hasUpper || hasLower,
-				alarmTriggered = triggered
+				connectionState    = state,
+				deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
+				alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
 			)
 		}
 	}
@@ -351,6 +351,7 @@ class WaageViewModel(
 
         _uiState.value = _uiState.value.copy(
             weightColor = color,
+			alarmActive    = hasUpper || hasLower,
             alarmTriggered = triggered
         )
 
