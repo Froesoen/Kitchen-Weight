@@ -38,6 +38,7 @@ import com.waage.data.WeightBuffer
 import com.waage.data.WeightSample
 import com.waage.viewmodel.WeightColor
 import java.util.Locale
+import com.waage.util.formatWeight
 import kotlin.math.roundToInt
 
 // ── KitchenAid-Stufen ─────────────────────────────────────────────────────────
@@ -145,9 +146,9 @@ fun WeightDisplay(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                StatChip("↓ Min", formatG(stats.min))
-                StatChip("Ø Avg", formatG(stats.avg))
-                StatChip("↑ Max", formatG(stats.max))
+                StatChip("↓ Min", formatWeight(stats.min))
+                StatChip("Ø Avg", formatWeight(stats.avg))
+                StatChip("↑ Max", formatWeight(stats.max))
             }
         }
     }
@@ -201,7 +202,8 @@ fun WeightGraph(
                 val range       = (maxVal - minVal).takeIf { it != 0f } ?: 1f
 
                 fun yOf(v: Float) = plotBottom - ((v - minVal) / range) * plotH
-                fun xOf(i: Int)   = plotLeft + i.toFloat() / (samples.size - 1) * plotW
+				fun xOf(i: Int)   = if (samples.size <= 1) plotLeft + plotW / 2f
+					else plotLeft + i.toFloat() / (samples.size - 1) * plotW
 
                 // ── 1. Alarm-Zonen Rechtecke ──────────────────────────────────
                 val hasUpper = alarmUpperG > 0f
@@ -214,8 +216,8 @@ fun WeightGraph(
                     if (hasUpper && alarmUpperG < maxVal) {
                         drawRect(
                             color   = Color(0xFFF44336).copy(alpha = 0.08f),
-                            topLeft = androidx.compose.ui.geometry.Offset(plotLeft, 0f),
-                            size    = androidx.compose.ui.geometry.Size(plotW, yUpper)
+                            topLeft = Offset(plotLeft, 0f),
+                            size    = Size(plotW, yUpper)
                         )
                     }
                     // Grüne Zone Mitte (zwischen Lower und Upper)
@@ -224,16 +226,16 @@ fun WeightGraph(
                     if (greenBottom > greenTop) {
                         drawRect(
                             color   = Color(0xFF4CAF50).copy(alpha = 0.07f),
-                            topLeft = androidx.compose.ui.geometry.Offset(plotLeft, greenTop),
-                            size    = androidx.compose.ui.geometry.Size(plotW, greenBottom - greenTop)
+                            topLeft = Offset(plotLeft, greenTop),
+                            size    = Size(plotW, greenBottom - greenTop)
                         )
                     }
                     // Rote Zone unten (< Lower)
                     if (hasLower && alarmLowerG > minVal) {
                         drawRect(
                             color   = Color(0xFFF44336).copy(alpha = 0.08f),
-                            topLeft = androidx.compose.ui.geometry.Offset(plotLeft, yLower),
-                            size    = androidx.compose.ui.geometry.Size(plotW, plotBottom - yLower)
+                            topLeft = Offset(plotLeft, yLower),
+                            size    = Size(plotW, plotBottom - yLower)
                         )
                     }
                 }
@@ -254,13 +256,13 @@ fun WeightGraph(
                         // Gridline
                         drawLine(
                             Color.White.copy(alpha = 0.06f),
-                            androidx.compose.ui.geometry.Offset(plotLeft, y),
-                            androidx.compose.ui.geometry.Offset(plotLeft + plotW, y),
+                            Offset(plotLeft, y),
+                            Offset(plotLeft + plotW, y),
                             1f
                         )
                         // Label
                         canvas.nativeCanvas.drawText(
-                            formatG(v), plotLeft - 4f, y + 8f, labelPaint
+                            formatWeight(v), plotLeft - 4f, y + 8f, labelPaint
                         )
                     }
                 }
@@ -269,8 +271,8 @@ fun WeightGraph(
                 if (0f in minVal..maxVal) {
                     drawLine(
                         Color.Gray.copy(alpha = 0.4f),
-                        androidx.compose.ui.geometry.Offset(plotLeft, yOf(0f)),
-                        androidx.compose.ui.geometry.Offset(plotLeft + plotW, yOf(0f)),
+                        Offset(plotLeft, yOf(0f)),
+                        Offset(plotLeft + plotW, yOf(0f)),
                         1f
                     )
                 }
@@ -280,8 +282,8 @@ fun WeightGraph(
                     val y = yOf(alarmUpperG)
                     drawLine(
                         Color(0xFFF44336),
-                        androidx.compose.ui.geometry.Offset(plotLeft, y),
-                        androidx.compose.ui.geometry.Offset(plotLeft + plotW, y),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
                         2f,
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
                     )
@@ -290,8 +292,8 @@ fun WeightGraph(
                     val y = yOf(alarmLowerG)
                     drawLine(
                         Color(0xFF2196F3),
-                        androidx.compose.ui.geometry.Offset(plotLeft, y),
-                        androidx.compose.ui.geometry.Offset(plotLeft + plotW, y),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
                         2f,
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
                     )
@@ -302,8 +304,8 @@ fun WeightGraph(
                     val y = yOf(stats.avg)
                     drawLine(
                         Color.White.copy(alpha = 0.35f),
-                        androidx.compose.ui.geometry.Offset(plotLeft, y),
-                        androidx.compose.ui.geometry.Offset(plotLeft + plotW, y),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
                         1.5f,
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
                     )
@@ -315,7 +317,7 @@ fun WeightGraph(
                     }
                     drawIntoCanvas { canvas ->
                         canvas.nativeCanvas.drawText(
-                            "Ø ${formatG(stats.avg)}", plotLeft + 2f, y - 4f, avgPaint
+                            "Ø ${formatWeight(stats.avg)}", plotLeft + 2f, y - 4f, avgPaint
                         )
                     }
                 }
@@ -323,8 +325,8 @@ fun WeightGraph(
                 // ── 6. X-Achsenlinie + Ticks ──────────────────────────────────
                 drawLine(
                     Color.Gray.copy(alpha = 0.4f),
-                    androidx.compose.ui.geometry.Offset(plotLeft, plotBottom),
-                    androidx.compose.ui.geometry.Offset(plotLeft + plotW, plotBottom),
+                    Offset(plotLeft, plotBottom),
+                    Offset(plotLeft + plotW, plotBottom),
                     1f
                 )
                 val nowMs       = System.currentTimeMillis()
@@ -347,8 +349,8 @@ fun WeightGraph(
                                         else "-${agoMs / 1000}s"
                         drawLine(
                             Color.Gray.copy(alpha = 0.4f),
-                            androidx.compose.ui.geometry.Offset(tickX, plotBottom),
-                            androidx.compose.ui.geometry.Offset(tickX, plotBottom + 4f),
+                            Offset(tickX, plotBottom),
+                            Offset(tickX, plotBottom + 4f),
                             1f
                         )
                         canvas.nativeCanvas.drawText(label, tickX, h - 2f, xTickPaint)
@@ -369,7 +371,7 @@ fun WeightGraph(
                 drawCircle(
                     Color(0xFFFFC107),
                     radius = 5f,
-                    center = androidx.compose.ui.geometry.Offset(xOf(peakIdx), yOf(weights[peakIdx]))
+                    center = Offset(xOf(peakIdx), yOf(weights[peakIdx]))
                 )
 
                 // ── 9. Aktueller-Wert-Punkt (weiß, rechts) ───────────────────
@@ -379,16 +381,16 @@ fun WeightGraph(
                 // Vertikale Linie
                 drawLine(
                     Color.White.copy(alpha = 0.3f),
-                    androidx.compose.ui.geometry.Offset(lastX, 0f),
-                    androidx.compose.ui.geometry.Offset(lastX, plotBottom),
+                    Offset(lastX, 0f),
+                    Offset(lastX, plotBottom),
                     1f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
                 )
                 // Kreis
                 drawCircle(Color.White, radius = 5f,
-                    center = androidx.compose.ui.geometry.Offset(lastX, lastY))
+                    center = Offset(lastX, lastY))
                 drawCircle(Color(0xFF121212), radius = 3f,
-                    center = androidx.compose.ui.geometry.Offset(lastX, lastY))
+                    center = Offset(lastX, lastY))
 
                 // ── 10. Aktueller-Wert-Label ──────────────────────────────────
                 val curPaint = android.graphics.Paint().apply {
@@ -400,7 +402,7 @@ fun WeightGraph(
                 }
                 drawIntoCanvas { canvas ->
                     val labelY = (lastY - 10f).coerceAtLeast(28f)
-                    canvas.nativeCanvas.drawText(formatG(weights[lastIdx]), lastX - 6f, labelY, curPaint)
+                    canvas.nativeCanvas.drawText(formatWeight(weights[lastIdx]), lastX - 6f, labelY, curPaint)
                 }
             }
         } else {
@@ -625,9 +627,3 @@ private fun Color.toArgb(): Int {
     val a = (alpha * 255).roundToInt()
     return (a shl 24) or (r shl 16) or (g shl 8) or b
 }
-
-private fun formatG(g: Float): String =
-    if (g >= 1000f || g <= -1000f)
-        String.format(Locale.getDefault(), "%.2f kg", g / 1000f)
-    else
-        String.format(Locale.getDefault(), "%.1f g", g)

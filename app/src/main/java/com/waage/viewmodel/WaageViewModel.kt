@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
+import com.waage.util.formatWeight
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -330,13 +331,6 @@ class WaageViewModel(
             stats = stats
         )
     }
-
-    private fun formatWeight(g: Float): String =
-        if (g >= 1000f || g <= -1000f) {
-            "%.3f kg".format(g / 1000f)
-        } else {
-            "%.1f g".format(g)
-        }
 
     private fun checkAlarm(weightG: Float) {
         val upper = _uiState.value.alarmUpperG
