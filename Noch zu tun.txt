@@ -18,6 +18,7 @@ Bugfixes
 - In Dialogen Text durch Icons ersetzen
 
 Erweiterungen
+- Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
 - Tongeber an ESP
 	- Schwellwert aus App vorgegeben
 	- Piep, wenn erreicht
