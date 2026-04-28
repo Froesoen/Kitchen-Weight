@@ -131,6 +131,20 @@ class WaageViewModel(
             Log.e(TAG, "disconnect", e)
         }
     }
+	
+	fun reconnectDevice() {
+        if (!canUseBluetooth()) return
+        try {
+            service()?.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "reconnect/disconnect", e)
+        }
+        // Kurze Verzögerung, dann mit letztem Gerät neu verbinden
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1000L)
+            autoConnectLastDevice()
+        }
+    }
 
     fun clearData() {
         buffer.clear()
@@ -282,10 +296,16 @@ class WaageViewModel(
     }
 
     private fun handleStateChange(state: ConnectionState) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(connectionState = state)
-        }
-    }
+		viewModelScope.launch {
+			val disconnected = state is ConnectionState.Disconnected ||
+							   state is ConnectionState.Error
+			_uiState.value = _uiState.value.copy(
+				weightColor    = color,
+				alarmActive    = hasUpper || hasLower,
+				alarmTriggered = triggered
+			)
+		}
+	}
 
     private fun recalculateUi() {
         val samples = buffer.getSamples(_uiState.value.selectedRange)
