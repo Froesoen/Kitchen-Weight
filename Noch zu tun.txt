@@ -4,10 +4,10 @@ Untersuchungen
 - Genügen Gewichte für Frequenzbestimmung oder muss der Beshcleunigungsaufnehmer ran?
 
 Bugfixes
-
+- Zeit-Ticks stimmen nicht, wenn Daten nicht für den ganzen Bereich vorliegen --> Plot mit NaNs auffüllen
+- Beim Start sollten gepufferte Daten (volle Puffer-Größe übertragen werden) Wie groß ist der aktuell?
 - FFT-Spektrum nur bei Mindestamplitude von 2g
 	
-
 Erweiterungen
 - Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
 - Zielbereich überlegen als Alternative zu Alarmen
