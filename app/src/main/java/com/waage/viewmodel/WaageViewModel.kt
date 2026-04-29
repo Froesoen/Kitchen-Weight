@@ -40,8 +40,8 @@ data class WaageUiState(
     val weightColor: WeightColor = WeightColor.WHITE,
     val alarmTriggered: Boolean = false,
     val alarmMuted: Boolean = false,
-    val alarmUpperG: Float = 0f,
-    val alarmLowerG: Float = 0f,
+    val alarmUpperG: Float = Float.NaN,
+    val alarmLowerG: Float = Float.NaN,
 
     val deviceSampleRateHz: Int = 20,
     val devicePublishRateHz: Int = 0,
@@ -70,6 +70,11 @@ class WaageViewModel(
     private var btService: BluetoothService? = null
 
     init {
+        _uiState.value = _uiState.value.copy(
+            alarmUpperG = settings.alarmUpperG,
+            alarmLowerG = settings.alarmLowerG,
+            alarmMuted  = settings.alarmMuted
+        )
         createBluetoothService()
         autoConnectLastDevice()
     }
@@ -297,16 +302,19 @@ class WaageViewModel(
     }
 
     private fun handleStateChange(state: ConnectionState) {
-		viewModelScope.launch {
-			val disconnected = state is ConnectionState.Disconnected ||
-							   state is ConnectionState.Error
-			_uiState.value = _uiState.value.copy(
-				connectionState    = state,
-				deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
-				alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
-			)
-		}
-	}
+        viewModelScope.launch {
+            val disconnected = state is ConnectionState.Disconnected ||
+                    state is ConnectionState.Error
+            _uiState.value = _uiState.value.copy(
+                connectionState    = state,
+                deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
+                alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
+            )
+            if (state is ConnectionState.Connected) {
+                requestDeviceConfig()
+            }
+        }
+    }
 
     private fun recalculateUi() {
         val samples = buffer.getSamples(_uiState.value.selectedRange)
@@ -335,8 +343,8 @@ class WaageViewModel(
     private fun checkAlarm(weightG: Float) {
         val upper = _uiState.value.alarmUpperG
         val lower = _uiState.value.alarmLowerG
-        val hasUpper = upper != 0f
-        val hasLower = lower != 0f
+        val hasUpper = !upper.isNaN()
+        val hasLower = !lower.isNaN()
 
         val color = when {
             !hasUpper && !hasLower -> WeightColor.WHITE

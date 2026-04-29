@@ -283,6 +283,7 @@ fun WaageScreen(
     if (showCalibration) {
         CalibrationDialog(
             calibrationFactor = uiState.calibrationFactor,
+            deviceConfigLoaded = uiState.deviceConfigLoaded,
             onDismiss         = { showCalibration = false },
             onLoad            = { viewModel.requestDeviceConfig() },
             onTare            = {

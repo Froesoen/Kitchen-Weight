@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun CalibrationDialog(
     calibrationFactor: Float,
+    deviceConfigLoaded: Boolean,
     onDismiss: () -> Unit,
     onLoad: () -> Unit,
     onTare: () -> Unit,
@@ -53,7 +54,11 @@ fun CalibrationDialog(
                 ) {
                     Text("Aktueller Faktor", color = Color.Gray, fontSize = 13.sp)
                     Text(
-                        "%.4f".format(savedFactor ?: calibrationFactor),
+                        text = when {
+                            savedFactor != null -> "%.4f".format(savedFactor)
+                            deviceConfigLoaded  -> "%.4f".format(calibrationFactor)
+                            else                -> "—"
+                        },
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -360,9 +365,6 @@ fun DeviceConfigDialog(
         dismissButton = {}
     )
 }
-        dismissButton = {}
-    )
-}
 
 @Composable
 fun AlarmDialog(
@@ -371,8 +373,14 @@ fun AlarmDialog(
     onDismiss: () -> Unit,
     onSave: (upper: Float, lower: Float) -> Unit
 ) {
-    var upperText by remember { mutableStateOf(if (upperG == 0f) "" else upperG.toString()) }
-    var lowerText by remember { mutableStateOf(if (lowerG == 0f) "" else lowerG.toString()) }
+    var upperText by remember { mutableStateOf(if (upperG.isNaN()) "" else upperG.toString()) }
+    var lowerText by remember { mutableStateOf(if (lowerG.isNaN()) "" else lowerG.toString()) }
+
+    val upperVal = upperText.replace(',', '.').let { if (it.isBlank()) null else it.toFloatOrNull() }
+    val lowerVal = lowerText.replace(',', '.').let { if (it.isBlank()) null else it.toFloatOrNull() }
+
+    val upperOk = upperText.isBlank() || upperVal != null
+    val lowerOk = lowerText.isBlank() || lowerVal != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -383,6 +391,8 @@ fun AlarmDialog(
                     value = upperText,
                     onValueChange = { upperText = it },
                     label = { Text("Oberes Limit [g]") },
+                    supportingText = { Text("Leer = kein Limit; negative Werte erlaubt") },
+                    isError = !upperOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -391,6 +401,8 @@ fun AlarmDialog(
                     value = lowerText,
                     onValueChange = { lowerText = it },
                     label = { Text("Unteres Limit [g]") },
+                    supportingText = { Text("Leer = kein Limit; negative Werte erlaubt") },
+                    isError = !lowerOk,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -401,19 +413,18 @@ fun AlarmDialog(
             Button(
                 onClick = {
                     onSave(
-                        upperText.replace(',', '.').toFloatOrNull() ?: 0f,
-                        lowerText.replace(',', '.').toFloatOrNull() ?: 0f
+                        upperVal ?: Float.NaN,
+                        lowerVal ?: Float.NaN
                     )
                     onDismiss()
-                }
+                },
+                enabled = upperOk && lowerOk
             ) {
                 Text("Speichern")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Abbrechen")
-            }
+            TextButton(onClick = onDismiss) { Text("Abbrechen") }
         }
     )
 }
