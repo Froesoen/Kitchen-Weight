@@ -1,24 +1,16 @@
 Untersuchungen
 - Kalibrierprozess präzise aufnehmen
 - HX711 auf 80Hz umbauen und testen
+- Genügen Gewichte für Frequenzbestimmung oder muss der Beshcleunigungsaufnehmer ran?
 
 Bugfixes
-- Verlaufsanzeige in der App wieder mit aufnehmen
-	- Achsenbeschriftung
-	- Einfärbung je nach Schwellwert
-	
-- Kalibrierdialog
-	- Beim Laden letzte Kalibrierung abrufen (wie Konfig-Dialog)
-	- OK statt speichern
-	
+
 - FFT-Spektrum nur bei Mindestamplitude von 2g
 	
-- Icon mit Transparenz	
-
-- In Dialogen Text durch Icons ersetzen
 
 Erweiterungen
 - Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
+- Zielbereich überlegen als Alternative zu Alarmen
 - Tongeber an ESP
 	- Schwellwert aus App vorgegeben
 	- Piep, wenn erreicht
@@ -26,7 +18,7 @@ Erweiterungen
 3 Wägezelen
 - Bauen und Grundlagentest
 
-- Zielbereich überlegen als Alternative zu Alarmen
+
 
 
 
