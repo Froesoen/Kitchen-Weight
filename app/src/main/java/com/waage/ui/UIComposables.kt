@@ -206,8 +206,8 @@ fun WeightGraph(
 					else plotLeft + i.toFloat() / (samples.size - 1) * plotW
 
                 // ── 1. Alarm-Zonen Rechtecke ──────────────────────────────────
-                val hasUpper = alarmUpperG > 0f
-                val hasLower = alarmLowerG > 0f
+                val hasUpper = !alarmUpperG.isNaN()
+                val hasLower = !alarmLowerG.isNaN()
                 if (hasUpper || hasLower) {
                     val yUpper = if (hasUpper) yOf(alarmUpperG).coerceIn(0f, plotBottom) else 0f
                     val yLower = if (hasLower) yOf(alarmLowerG).coerceIn(0f, plotBottom) else plotBottom

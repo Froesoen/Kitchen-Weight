@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -410,22 +411,57 @@ fun AlarmDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    onSave(
-                        upperVal ?: Float.NaN,
-                        lowerVal ?: Float.NaN
-                    )
-                    onDismiss()
-                },
-                enabled = upperOk && lowerOk
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Speichern")
+                // Abbrechen
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Abbrechen",
+                        tint = Color(0xFFF44336)
+                    )
+                }
+                // Löschen
+                IconButton(
+                    onClick = {
+                        onSave(Float.NaN, Float.NaN)
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Löschen",
+                        tint = Color(0xFFFF9800)
+                    )
+                }
+                // Speichern
+                IconButton(
+                    onClick = {
+                        onSave(
+                            upperVal ?: Float.NaN,
+                            lowerVal ?: Float.NaN
+                        )
+                        onDismiss()
+                    },
+                    enabled = upperOk && lowerOk,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Speichern",
+                        tint = if (upperOk && lowerOk) Color(0xFF4CAF50) else Color.Gray
+                    )
+                }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Abbrechen") }
-        }
+        dismissButton = {}
     )
 }
 
