@@ -33,10 +33,12 @@ import androidx.compose.ui.unit.sp
 import com.waage.bluetooth.ConnectionState
 import com.waage.bluetooth.FftResult
 import com.waage.data.TimeRange
+import kotlin.math.abs
 import com.waage.data.WeightBuffer
 import com.waage.data.WeightSample
 import com.waage.viewmodel.WeightColor
 import java.util.Locale
+import com.waage.util.formatWeight
 import kotlin.math.roundToInt
 
 // ── KitchenAid-Stufen ─────────────────────────────────────────────────────────
@@ -144,9 +146,9 @@ fun WeightDisplay(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                StatChip("↓ Min", formatG(stats.min))
-                StatChip("Ø Avg", formatG(stats.avg))
-                StatChip("↑ Max", formatG(stats.max))
+                StatChip("↓ Min", formatWeight(stats.min))
+                StatChip("Ø Avg", formatWeight(stats.avg))
+                StatChip("↑ Max", formatWeight(stats.max))
             }
         }
     }
@@ -182,64 +184,225 @@ fun WeightGraph(
                     .weight(1f)
                     .padding(horizontal = 8.dp)
             ) {
-                val w       = size.width
-                val h       = size.height
-                val topLabelY    = 28f
-                val bottomLabelY = h - 4f
-                val weights = samples.map { it.weightG }
-                var minVal  = weights.minOrNull() ?: 0f
-                var maxVal  = weights.maxOrNull() ?: 0f
-                val margin  = maxOf((maxVal - minVal) * 0.1f, 1f)
+                val w           = size.width
+                val h           = size.height
+                val leftPad     = 52f   // Y-Labels
+                val bottomPad   = 20f   // X-Labels
+                val rightPad    = 8f
+                val plotW       = w - leftPad - rightPad
+                val plotH       = h - bottomPad
+                val plotLeft    = leftPad
+                val plotBottom  = h - bottomPad
+
+                val weights     = samples.map { it.weightG }
+                var minVal      = weights.minOrNull() ?: 0f
+                var maxVal      = weights.maxOrNull() ?: 0f
+                val margin      = maxOf((maxVal - minVal) * 0.1f, 1f)
                 minVal -= margin; maxVal += margin
-                val range = (maxVal - minVal).takeIf { it != 0f } ?: 1f
+                val range       = (maxVal - minVal).takeIf { it != 0f } ?: 1f
 
-                // Alarmlinien
-                if (alarmUpperG > 0f && alarmUpperG in minVal..maxVal) {
-                    val y = h - ((alarmUpperG - minVal) / range) * h
-                    drawLine(
-                        Color(0xFFF44336), Offset(0f, y), Offset(w, y), 2f,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
-                    )
-                }
-                if (alarmLowerG > 0f && alarmLowerG in minVal..maxVal) {
-                    val y = h - ((alarmLowerG - minVal) / range) * h
-                    drawLine(
-                        Color(0xFF2196F3), Offset(0f, y), Offset(w, y), 2f,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
-                    )
+                fun yOf(v: Float) = plotBottom - ((v - minVal) / range) * plotH
+				fun xOf(i: Int)   = if (samples.size <= 1) plotLeft + plotW / 2f
+					else plotLeft + i.toFloat() / (samples.size - 1) * plotW
+
+                // ── 1. Alarm-Zonen Rechtecke ──────────────────────────────────
+                val hasUpper = !alarmUpperG.isNaN()
+                val hasLower = !alarmLowerG.isNaN()
+                if (hasUpper || hasLower) {
+                    val yUpper = if (hasUpper) yOf(alarmUpperG).coerceIn(0f, plotBottom) else 0f
+                    val yLower = if (hasLower) yOf(alarmLowerG).coerceIn(0f, plotBottom) else plotBottom
+
+                    // Rote Zone oben (> Upper)
+                    if (hasUpper && alarmUpperG < maxVal) {
+                        drawRect(
+                            color   = Color(0xFFF44336).copy(alpha = 0.08f),
+                            topLeft = Offset(plotLeft, 0f),
+                            size    = Size(plotW, yUpper)
+                        )
+                    }
+                    // Grüne Zone Mitte (zwischen Lower und Upper)
+                    val greenTop    = if (hasUpper) yUpper else 0f
+                    val greenBottom = if (hasLower) yLower else plotBottom
+                    if (greenBottom > greenTop) {
+                        drawRect(
+                            color   = Color(0xFF4CAF50).copy(alpha = 0.07f),
+                            topLeft = Offset(plotLeft, greenTop),
+                            size    = Size(plotW, greenBottom - greenTop)
+                        )
+                    }
+                    // Rote Zone unten (< Lower)
+                    if (hasLower && alarmLowerG > minVal) {
+                        drawRect(
+                            color   = Color(0xFFF44336).copy(alpha = 0.08f),
+                            topLeft = Offset(plotLeft, yLower),
+                            size    = Size(plotW, plotBottom - yLower)
+                        )
+                    }
                 }
 
-                // Nulllinie
+                // ── 2. Horizontale Gridlines + Y-Labels ───────────────────────
+                val yTickCount = 4
+                val labelPaint = android.graphics.Paint().apply {
+                    color       = android.graphics.Color.LTGRAY
+                    textSize    = 26f
+                    textAlign   = android.graphics.Paint.Align.RIGHT
+                    isAntiAlias = true
+                }
+                drawIntoCanvas { canvas ->
+                    for (t in 0..yTickCount) {
+                        val frac  = t.toFloat() / yTickCount
+                        val v     = minVal + frac * range
+                        val y     = yOf(v)
+                        // Gridline
+                        drawLine(
+                            Color.White.copy(alpha = 0.06f),
+                            Offset(plotLeft, y),
+                            Offset(plotLeft + plotW, y),
+                            1f
+                        )
+                        // Label
+                        canvas.nativeCanvas.drawText(
+                            formatWeight(v), plotLeft - 4f, y + 8f, labelPaint
+                        )
+                    }
+                }
+
+                // ── 3. Nulllinie ──────────────────────────────────────────────
                 if (0f in minVal..maxVal) {
-                    val y = h - ((0f - minVal) / range) * h
-                    drawLine(Color.Gray.copy(alpha = 0.4f), Offset(0f, y), Offset(w, y), 1f)
+                    drawLine(
+                        Color.Gray.copy(alpha = 0.4f),
+                        Offset(plotLeft, yOf(0f)),
+                        Offset(plotLeft + plotW, yOf(0f)),
+                        1f
+                    )
                 }
 
-                // Kurve
+                // ── 4. Alarm-Linien gestrichelt ───────────────────────────────
+                if (hasUpper && alarmUpperG in minVal..maxVal) {
+                    val y = yOf(alarmUpperG)
+                    drawLine(
+                        Color(0xFFF44336),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
+                        2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
+                    )
+                }
+                if (hasLower && alarmLowerG in minVal..maxVal) {
+                    val y = yOf(alarmLowerG)
+                    drawLine(
+                        Color(0xFF2196F3),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
+                        2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
+                    )
+                }
+
+                // ── 5. Avg-Linie gestrichelt ──────────────────────────────────
+                if (stats != null && stats.avg in minVal..maxVal) {
+                    val y = yOf(stats.avg)
+                    drawLine(
+                        Color.White.copy(alpha = 0.35f),
+                        Offset(plotLeft, y),
+                        Offset(plotLeft + plotW, y),
+                        1.5f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+                    )
+                    val avgPaint = android.graphics.Paint().apply {
+                        color       = android.graphics.Color.LTGRAY
+                        textSize    = 22f
+                        textAlign   = android.graphics.Paint.Align.LEFT
+                        isAntiAlias = true
+                    }
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawText(
+                            "Ø ${formatWeight(stats.avg)}", plotLeft + 2f, y - 4f, avgPaint
+                        )
+                    }
+                }
+
+                // ── 6. X-Achsenlinie + Ticks ──────────────────────────────────
+                drawLine(
+                    Color.Gray.copy(alpha = 0.4f),
+                    Offset(plotLeft, plotBottom),
+                    Offset(plotLeft + plotW, plotBottom),
+                    1f
+                )
+                val nowMs       = System.currentTimeMillis()
+                val rangeMs     = selectedRange.seconds * 1000L
+                val useMinutes  = selectedRange.seconds > 60
+                val xTickCount  = 5
+                val xTickPaint  = android.graphics.Paint().apply {
+                    color       = android.graphics.Color.GRAY
+                    textSize    = 22f
+                    textAlign   = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                }
+                drawIntoCanvas { canvas ->
+                    for (t in 0 until xTickCount) {
+                        val frac      = t.toFloat() / (xTickCount - 1)
+                        val tickX     = plotLeft + frac * plotW
+                        val agoMs     = ((1f - frac) * rangeMs).toLong()
+                        val label     = if (agoMs == 0L) "jetzt"
+                                        else if (useMinutes) "-${agoMs / 60000}m"
+                                        else "-${agoMs / 1000}s"
+                        drawLine(
+                            Color.Gray.copy(alpha = 0.4f),
+                            Offset(tickX, plotBottom),
+                            Offset(tickX, plotBottom + 4f),
+                            1f
+                        )
+                        canvas.nativeCanvas.drawText(label, tickX, h - 2f, xTickPaint)
+                    }
+                }
+
+                // ── 7. Kurve ──────────────────────────────────────────────────
                 val path = Path()
-                samples.forEachIndexed { i, sample ->
-                    val x = i.toFloat() / (samples.size - 1) * w
-                    val y = h - ((sample.weightG - minVal) / range) * h
+                samples.forEachIndexed { i, s ->
+                    val x = xOf(i)
+                    val y = yOf(s.weightG)
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
                 drawPath(path, Color(0xFF4CAF50), style = Stroke(width = 2.5f))
 
-                // Spitzenpunkt
+                // ── 8. Peak-Punkt (gelb) ──────────────────────────────────────
                 val peakIdx = weights.indices.maxByOrNull { weights[it] } ?: return@Canvas
-                val px = peakIdx.toFloat() / (samples.size - 1) * w
-                val py = h - ((weights[peakIdx] - minVal) / range) * h
-                drawCircle(Color(0xFFFFC107), radius = 5f, center = Offset(px, py))
+                drawCircle(
+                    Color(0xFFFFC107),
+                    radius = 5f,
+                    center = Offset(xOf(peakIdx), yOf(weights[peakIdx]))
+                )
 
-                // Achsenbeschriftung
-                val paint = android.graphics.Paint().apply {
-                    color       = android.graphics.Color.LTGRAY
-                    textSize    = 28f
-                    textAlign   = android.graphics.Paint.Align.LEFT
+                // ── 9. Aktueller-Wert-Punkt (weiß, rechts) ───────────────────
+                val lastIdx = samples.size - 1
+                val lastX   = xOf(lastIdx)
+                val lastY   = yOf(weights[lastIdx])
+                // Vertikale Linie
+                drawLine(
+                    Color.White.copy(alpha = 0.3f),
+                    Offset(lastX, 0f),
+                    Offset(lastX, plotBottom),
+                    1f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
+                )
+                // Kreis
+                drawCircle(Color.White, radius = 5f,
+                    center = Offset(lastX, lastY))
+                drawCircle(Color(0xFF121212), radius = 3f,
+                    center = Offset(lastX, lastY))
+
+                // ── 10. Aktueller-Wert-Label ──────────────────────────────────
+                val curPaint = android.graphics.Paint().apply {
+                    color       = android.graphics.Color.WHITE
+                    textSize    = 26f
+                    textAlign   = android.graphics.Paint.Align.RIGHT
                     isAntiAlias = true
+                    isFakeBoldText = true
                 }
                 drawIntoCanvas { canvas ->
-                    canvas.nativeCanvas.drawText(formatG(maxVal), 4f, topLabelY, paint)
-                    canvas.nativeCanvas.drawText(formatG(minVal), 4f, bottomLabelY, paint)
+                    val labelY = (lastY - 10f).coerceAtLeast(28f)
+                    canvas.nativeCanvas.drawText(formatWeight(weights[lastIdx]), lastX - 6f, labelY, curPaint)
                 }
             }
         } else {
@@ -464,9 +627,3 @@ private fun Color.toArgb(): Int {
     val a = (alpha * 255).roundToInt()
     return (a shl 24) or (r shl 16) or (g shl 8) or b
 }
-
-private fun formatG(g: Float): String =
-    if (g >= 1000f || g <= -1000f)
-        String.format(Locale.getDefault(), "%.2f kg", g / 1000f)
-    else
-        String.format(Locale.getDefault(), "%.1f g", g)

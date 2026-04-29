@@ -80,13 +80,12 @@ class AppSettings(context: Context) {
         set(v) = prefs.edit().putString("time_range", v.name).apply()
 
     var alarmUpperG: Float
-        get() = prefs.getFloat("alarm_upper", 0f)
+        get() = prefs.getFloat("alarm_upper", Float.NaN)
         set(v) = prefs.edit().putFloat("alarm_upper", v).apply()
 
     var alarmLowerG: Float
-        get() = prefs.getFloat("alarm_lower", 0f)
+        get() = prefs.getFloat("alarm_lower", Float.NaN)
         set(v) = prefs.edit().putFloat("alarm_lower", v).apply()
-
     var alarmMuted: Boolean
         get() = prefs.getBoolean("alarm_muted", false)
         set(v) = prefs.edit().putBoolean("alarm_muted", v).apply()

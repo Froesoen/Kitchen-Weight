@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
+import com.waage.util.formatWeight
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -39,8 +40,8 @@ data class WaageUiState(
     val weightColor: WeightColor = WeightColor.WHITE,
     val alarmTriggered: Boolean = false,
     val alarmMuted: Boolean = false,
-    val alarmUpperG: Float = 0f,
-    val alarmLowerG: Float = 0f,
+    val alarmUpperG: Float = Float.NaN,
+    val alarmLowerG: Float = Float.NaN,
 
     val deviceSampleRateHz: Int = 20,
     val devicePublishRateHz: Int = 0,
@@ -69,6 +70,11 @@ class WaageViewModel(
     private var btService: BluetoothService? = null
 
     init {
+        _uiState.value = _uiState.value.copy(
+            alarmUpperG = settings.alarmUpperG,
+            alarmLowerG = settings.alarmLowerG,
+            alarmMuted  = settings.alarmMuted
+        )
         createBluetoothService()
         autoConnectLastDevice()
     }
@@ -131,6 +137,20 @@ class WaageViewModel(
             Log.e(TAG, "disconnect", e)
         }
     }
+	
+	fun reconnectDevice() {
+        if (!canUseBluetooth()) return
+        try {
+            service()?.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "reconnect/disconnect", e)
+        }
+        // Kurze Verzögerung, dann mit letztem Gerät neu verbinden
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1000L)
+            autoConnectLastDevice()
+        }
+    }
 
     fun clearData() {
         buffer.clear()
@@ -159,6 +179,7 @@ class WaageViewModel(
         if (!canUseBluetooth()) return
         try {
             service()?.sendGetConfig()
+            service()?.sendGetFactor()
         } catch (e: SecurityException) {
             Log.e(TAG, "getconfig", e)
         }
@@ -283,7 +304,16 @@ class WaageViewModel(
 
     private fun handleStateChange(state: ConnectionState) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(connectionState = state)
+            val disconnected = state is ConnectionState.Disconnected ||
+                    state is ConnectionState.Error
+            _uiState.value = _uiState.value.copy(
+                connectionState    = state,
+                deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
+                alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
+            )
+            if (state is ConnectionState.Connected) {
+                requestDeviceConfig()
+            }
         }
     }
 
@@ -311,18 +341,11 @@ class WaageViewModel(
         )
     }
 
-    private fun formatWeight(g: Float): String =
-        if (g >= 1000f || g <= -1000f) {
-            "%.3f kg".format(g / 1000f)
-        } else {
-            "%.1f g".format(g)
-        }
-
     private fun checkAlarm(weightG: Float) {
         val upper = _uiState.value.alarmUpperG
         val lower = _uiState.value.alarmLowerG
-        val hasUpper = upper != 0f
-        val hasLower = lower != 0f
+        val hasUpper = !upper.isNaN()
+        val hasLower = !lower.isNaN()
 
         val color = when {
             !hasUpper && !hasLower -> WeightColor.WHITE
@@ -337,6 +360,7 @@ class WaageViewModel(
 
         _uiState.value = _uiState.value.copy(
             weightColor = color,
+			alarmActive    = hasUpper || hasLower,
             alarmTriggered = triggered
         )
 
