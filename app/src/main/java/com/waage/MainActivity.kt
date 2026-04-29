@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
@@ -107,15 +108,6 @@ fun WaageScreen(
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(
-                            text        = { Text("Bluetooth-Gerät wählen") },
-                            leadingIcon = { Icon(Icons.Default.Bluetooth, null) },
-                            onClick     = {
-                                showMenu = false
-                                if (bluetoothPermissionsGranted) showDevicePicker = true
-                                else showBluetoothPermissionDialog = true
-                            }
-                        )
-                        DropdownMenuItem(
                             text        = { Text("Kalibrierung") },
                             leadingIcon = { Icon(Icons.Default.Tune, null) },
                             onClick     = { showCalibration = true; showMenu = false }
@@ -136,6 +128,24 @@ fun WaageScreen(
                             onClick     = { showExport = true; showMenu = false }
                         )
                         HorizontalDivider()
+                        DropdownMenuItem(
+                            text        = { Text("Bluetooth-Gerät wählen") },
+                            leadingIcon = { Icon(Icons.Default.Bluetooth, null) },
+                            onClick     = {
+                                showMenu = false
+                                if (bluetoothPermissionsGranted) showDevicePicker = true
+                                else showBluetoothPermissionDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text        = { Text("Verbindung aktualisieren") },
+                            leadingIcon = { Icon(Icons.Default.Sync, null) },
+                            onClick     = {
+                                showMenu = false
+                                if (bluetoothPermissionsGranted) viewModel.reconnectDevice()
+                                else showBluetoothPermissionDialog = true
+                            }
+                        )
                         DropdownMenuItem(
                             text        = { Text("Verbindung trennen") },
                             leadingIcon = { Icon(Icons.Default.BluetoothDisabled, null) },
@@ -274,6 +284,7 @@ fun WaageScreen(
         CalibrationDialog(
             calibrationFactor = uiState.calibrationFactor,
             onDismiss         = { showCalibration = false },
+            onLoad            = { viewModel.requestDeviceConfig() },
             onTare            = {
                 if (bluetoothPermissionsGranted) viewModel.sendTare()
                 else showBluetoothPermissionDialog = true

@@ -1,11 +1,15 @@
 package com.waage.ui
 
+// NACHHER
 import android.bluetooth.BluetoothDevice
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,9 +24,12 @@ import androidx.compose.ui.unit.sp
 fun CalibrationDialog(
     calibrationFactor: Float,
     onDismiss: () -> Unit,
+    onLoad: () -> Unit,
     onTare: () -> Unit,
     onCalibrate: (weightG: Float, onSuccess: (Float) -> Unit) -> Unit
 ) {
+    LaunchedEffect(Unit) { onLoad() }
+
     var weightText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var savedFactor by remember { mutableStateOf<Float?>(null) }
@@ -45,7 +52,10 @@ fun CalibrationDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Aktueller Faktor", color = Color.Gray, fontSize = 13.sp)
-                    Text("%.4f".format(savedFactor ?: calibrationFactor), fontWeight = FontWeight.Medium)
+                    Text(
+                        "%.4f".format(savedFactor ?: calibrationFactor),
+                        fontWeight = FontWeight.Medium
+                    )
                 }
 
                 OutlinedTextField(
@@ -72,14 +82,33 @@ fun CalibrationDialog(
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onDismiss, enabled = !busy) {
-                    Text("Abbrechen")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Abbrechen — rotes X
+                IconButton(
+                    onClick = onDismiss,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Abbrechen",
+                        tint = if (!busy) Color(0xFFF44336) else Color.Gray
+                    )
                 }
-                TextButton(onClick = onTare, enabled = !busy) {
-                    Text("Tara")
+                // Tara — Textbutton
+                TextButton(
+                    onClick = onTare,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Tara", maxLines = 1)
                 }
-                Button(
+                // Kalibrieren — grüner Haken
+                IconButton(
                     onClick = {
                         busy = true
                         onCalibrate(weightVal!!) { newFactor ->
@@ -88,9 +117,14 @@ fun CalibrationDialog(
                             onDismiss()
                         }
                     },
-                    enabled = weightOk && !busy
+                    enabled = weightOk && !busy,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Text("Kalibrieren")
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Kalibrieren",
+                        tint = if (weightOk && !busy) Color(0xFF4CAF50) else Color.Gray
+                    )
                 }
             }
         },
@@ -283,12 +317,18 @@ fun DeviceConfigDialog(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(
+                // Abbrechen — rotes X
+                IconButton(
                     onClick = onDismiss,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Abbr.", maxLines = 1)
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Abbrechen",
+                        tint = Color(0xFFF44336)
+                    )
                 }
+                // Reset — roter Text
                 TextButton(
                     onClick = { showResetConfirm = true },
                     enabled = uiState.deviceConfigLoaded,
@@ -300,7 +340,8 @@ fun DeviceConfigDialog(
                         color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray
                     )
                 }
-                Button(
+                // Speichern — grüner Haken
+                IconButton(
                     onClick = {
                         onSave(prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!)
                         onDismiss()
@@ -308,10 +349,17 @@ fun DeviceConfigDialog(
                     enabled = uiState.deviceConfigLoaded && allValid,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("OK", maxLines = 1)
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Speichern",
+                        tint = if (uiState.deviceConfigLoaded && allValid) Color(0xFF4CAF50) else Color.Gray
+                    )
                 }
             }
         },
+        dismissButton = {}
+    )
+}
         dismissButton = {}
     )
 }

@@ -17,15 +17,13 @@ Bugfixes
 
 - In Dialogen Text durch Icons ersetzen
 
-Erweiterungen / Verbesserungen
-
-- Intern mit 40Hz messen, um mehr Werte für Mittelung zu haben
-
+Erweiterungen
+- Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
 - Tongeber an ESP
 	- Schwellwert aus App vorgegeben
 	- Piep, wenn erreicht
 
-3 Wägezellen
+3 Wägezelen
 - Bauen und Grundlagentest
 
 - Zielbereich überlegen als Alternative zu Alarmen

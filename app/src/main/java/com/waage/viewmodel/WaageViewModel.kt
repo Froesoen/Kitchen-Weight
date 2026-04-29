@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
+import com.waage.util.formatWeight
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -129,6 +130,20 @@ class WaageViewModel(
             service()?.disconnect()
         } catch (e: Exception) {
             Log.e(TAG, "disconnect", e)
+        }
+    }
+	
+	fun reconnectDevice() {
+        if (!canUseBluetooth()) return
+        try {
+            service()?.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "reconnect/disconnect", e)
+        }
+        // Kurze Verzögerung, dann mit letztem Gerät neu verbinden
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1000L)
+            autoConnectLastDevice()
         }
     }
 
@@ -282,10 +297,16 @@ class WaageViewModel(
     }
 
     private fun handleStateChange(state: ConnectionState) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(connectionState = state)
-        }
-    }
+		viewModelScope.launch {
+			val disconnected = state is ConnectionState.Disconnected ||
+							   state is ConnectionState.Error
+			_uiState.value = _uiState.value.copy(
+				connectionState    = state,
+				deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
+				alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
+			)
+		}
+	}
 
     private fun recalculateUi() {
         val samples = buffer.getSamples(_uiState.value.selectedRange)
@@ -311,13 +332,6 @@ class WaageViewModel(
         )
     }
 
-    private fun formatWeight(g: Float): String =
-        if (g >= 1000f || g <= -1000f) {
-            "%.3f kg".format(g / 1000f)
-        } else {
-            "%.1f g".format(g)
-        }
-
     private fun checkAlarm(weightG: Float) {
         val upper = _uiState.value.alarmUpperG
         val lower = _uiState.value.alarmLowerG
@@ -337,6 +351,7 @@ class WaageViewModel(
 
         _uiState.value = _uiState.value.copy(
             weightColor = color,
+			alarmActive    = hasUpper || hasLower,
             alarmTriggered = triggered
         )
 
