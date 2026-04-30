@@ -41,6 +41,13 @@ sealed class WaageMessage {
     data class Factor(val value: Float) : WaageMessage()
     data class FftData(val result: FftResult) : WaageMessage()
     object SyncDone : WaageMessage()
+	data class BufferStart(val count: Int) : WaageMessage()
+    data class BufferSample(
+        val weightG: Float,
+        val timestampMs: Long,
+        val synced: Boolean
+    ) : WaageMessage()
+    object BufferEnd : WaageMessage()
     object NeedSync : WaageMessage()
     data class Error(val message: String) : WaageMessage()
     data class Config(
@@ -213,6 +220,24 @@ class BluetoothService(
                 "sync_done" -> {
                     onMessage(WaageMessage.SyncDone)
                 }
+				
+                "buffer_start" -> {
+                    onMessage(WaageMessage.BufferStart(obj.optInt("count", 0)))
+                }
+
+                "buffer_sample" -> {
+                    onMessage(
+                        WaageMessage.BufferSample(
+                            weightG     = obj.getDouble("weight").toFloat(),
+                            timestampMs = obj.getLong("ts"),
+                            synced      = obj.optBoolean("synced", true)
+                        )
+                    )
+                }
+
+                "buffer_end" -> {
+                    onMessage(WaageMessage.BufferEnd)
+                }
 
                 "need_sync" -> {
                     onMessage(WaageMessage.NeedSync)
@@ -266,6 +291,7 @@ class BluetoothService(
 
     fun sendTare() = send(JSONObject().put("type", "tare"))
     fun sendGetFactor() = send(JSONObject().put("type", "get_factor"))
+	fun sendGetBuffer() = send(JSONObject().put("type", "getbuffer"))
     fun sendGetConfig() = send(JSONObject().put("type", "getconfig"))
     fun sendResetConfig() = send(JSONObject().put("type", "resetconfig"))
 

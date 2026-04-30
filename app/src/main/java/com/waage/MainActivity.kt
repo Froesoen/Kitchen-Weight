@@ -32,6 +32,12 @@ import com.waage.bluetooth.hasBluetoothConnectPermission
 import com.waage.bluetooth.requiredBluetoothPermissions
 import com.waage.ui.*
 import com.waage.viewmodel.WaageViewModel
+import androidx.compose.foundation.Image
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import com.waage.R
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: WaageViewModel
@@ -97,7 +103,24 @@ fun WaageScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title  = { Text("Waage", color = Color.White) },
+                title = {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(10.dp)
+					) {
+						Image(
+							painter = painterResource(id = R.mipmap.ic_launcher_foreground),
+							contentDescription = "Kitchen Weight Logo",
+							modifier = Modifier.size(28.dp),
+							contentScale = ContentScale.Fit
+						)
+						Text(
+							text = "Kitchen Weight",
+							color = Color.White,
+							fontWeight = FontWeight.SemiBold
+						)
+					}
+				},
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF121212)),
                 actions = {
                     IconButton(onClick = { viewModel.clearData() }) {
