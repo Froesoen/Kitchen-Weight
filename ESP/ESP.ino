@@ -1,12 +1,18 @@
 // ============================================================
 //  Kitchen Weight — ESP32 Firmware
-//  Waage mit HX711, SSD1306, Bluetooth, FFT
+//  Waage mit 3× HX711, SSD1306, Bluetooth, FFT
 // ============================================================
+//
+//  Kanäle:
+//    scaleRear   – 2 Zellen hinten  (Vollbrücke)
+//    scaleMid    – 2 Zellen mitte   (Vollbrücke)
+//    scaleFront  – 1 Zelle + Dummy  (Vollbrücke)
 //
 //  Feste Parameter (nicht konfigurierbar):
 //    SAMPLE_RATE_HZ = 20 Hz  → Nyquist 10 Hz, KitchenAid-Stufen auflösbar
 //    FFT_SIZE       = 128    → 0.156 Hz/Bin, 6.4 s Frame
 //    FFT_BARS       = 32     → 4 px/Balken auf 128px OLED
+//    FFT-Quelle     = scaleFront (Frontkanal)
 //
 //  Konfigurierbar (App / NVS):
 //    publishRateHz         1–20 Hz   BT-Senderate
@@ -14,8 +20,17 @@
 //    offlineBufferSeconds  10–180 s  Puffergröße
 //    displayHz             1–10 Hz   OLED-Refresh
 //
+//  Kalibrierung:
+//    Vorläufig: ein gemeinsamer Faktor für alle drei Kanäle.
+//    Gesamt-Rohwert (Summe aller drei) wird gegen bekanntes Gewicht kalibriert.
+//    Spätere Erweiterung: drei individuelle Faktoren (kfak0/kfak1/kfak2).
+//
 //  Benötigte Libraries:
 //    HX711 (bogde), U8g2, ArduinoJson, arduinoFFT (kosme1 v2.x)
+// ============================================================
+
+// ============================================================
+//  BLOCK 1 — Importe und Definitionen
 // ============================================================
 
 #include <Arduino.h>
@@ -27,59 +42,67 @@
 #include <ArduinoJson.h>
 #include <arduinoFFT.h>
 
-// ── Hardware ─────────────────────────────────────────────────────────────────
-#define HX711_DOUT      25
-#define HX711_SCK       26
-#define BUTTON_PIN      32
-// HX711 RATE-Pin muss auf HIGH (3.3V) → 80 SPS Modus
+// ── Hardware-Pins ─────────────────────────────────────────────────────────────
+//  HX711 #1 – hinten  (bestehender Kanal bleibt auf 25/26)
+#define HX711_REAR_DOUT   25
+#define HX711_REAR_SCK    26
+//  HX711 #2 – mitte
+#define HX711_MID_DOUT    33
+#define HX711_MID_SCK     27
+//  HX711 #3 – vorne (FFT-Quelle)
+#define HX711_FRONT_DOUT  13
+#define HX711_FRONT_SCK   14
+//  Sonstiges
+#define BUTTON_PIN        32
+// Alle drei HX711: RATE-Pin auf HIGH (3.3V) → 80 SPS Modus
 
-// ── NVS ──────────────────────────────────────────────────────────────────────
+// ── NVS-Schlüssel ─────────────────────────────────────────────────────────────
 #define BT_DEVICE_NAME  "Waage_ESP32"
 #define NVS_NAMESPACE   "waage"
 #define NVS_KEY_INIT    "cfginit"
-#define NVS_KEY_FACTOR  "kalfaktor"
+#define NVS_KEY_FACTOR  "kalfaktor"   // gemeinsamer Faktor (Übergangslösung)
 #define NVS_KEY_PRATE   "prate"
 #define NVS_KEY_AVG     "avg"
 #define NVS_KEY_BUFSEC  "bufsec"
 #define NVS_KEY_DISPHZ  "disphz"
 #define NVS_KEY_DISPMOD "dispmode"
 
-// ── Feste Sampling-Konstante ──────────────────────────────────────────────────
-constexpr uint8_t  SAMPLE_RATE_HZ   = 20;        // Hz – nie ändern
+// ── Feste Sampling-Konstanten ─────────────────────────────────────────────────
+constexpr uint8_t  SAMPLE_RATE_HZ   = 20;
 constexpr uint32_t SAMPLE_PERIOD_MS = 1000UL / SAMPLE_RATE_HZ;  // 50 ms
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
-constexpr uint16_t DEFAULT_PUBLISH_RATE_HZ         = 2;
-constexpr uint8_t  DEFAULT_AVG_SAMPLES             = 2;
-constexpr uint16_t DEFAULT_OFFLINE_BUFFER_SECONDS  = 60;
-constexpr uint8_t  DEFAULT_DISPLAY_HZ              = 2;
+constexpr uint16_t DEFAULT_PUBLISH_RATE_HZ        = 2;
+constexpr uint8_t  DEFAULT_AVG_SAMPLES            = 2;
+constexpr uint16_t DEFAULT_OFFLINE_BUFFER_SECONDS = 60;
+constexpr uint8_t  DEFAULT_DISPLAY_HZ             = 2;
 
 // ── Puffer-Limits ─────────────────────────────────────────────────────────────
 // Max. offlineBufferSeconds = 180 s → 20 × 180 = 3600 Samples
 constexpr uint16_t MAX_OFFLINE_BUFFER_SECONDS = 180;
-constexpr uint16_t MAX_OFFLINE_BUFFER         = 3600;  // SAMPLE_RATE_HZ × 180
+constexpr uint16_t MAX_OFFLINE_BUFFER         = 3600;
 
 // ── Display-Layout ────────────────────────────────────────────────────────────
-constexpr uint8_t DISPLAY_WIDTH   = 128;
-constexpr uint8_t DISPLAY_HEIGHT  = 64;
-constexpr uint8_t VALUE_HEIGHT    = 20;
-constexpr uint8_t PLOT_HEIGHT     = DISPLAY_HEIGHT - VALUE_HEIGHT;
-constexpr uint8_t PLOT_Y_TOP      = VALUE_HEIGHT;
-constexpr uint8_t PLOT_Y_BOTTOM   = DISPLAY_HEIGHT - 1;
-constexpr uint8_t DISP_HIST       = 128;
+constexpr uint8_t DISPLAY_WIDTH    = 128;
+constexpr uint8_t DISPLAY_HEIGHT   = 64;
+constexpr uint8_t VALUE_HEIGHT     = 20;
+constexpr uint8_t PLOT_HEIGHT      = DISPLAY_HEIGHT - VALUE_HEIGHT;
+constexpr uint8_t PLOT_Y_TOP       = VALUE_HEIGHT;
+constexpr uint8_t PLOT_Y_BOTTOM    = DISPLAY_HEIGHT - 1;
+constexpr uint8_t DISP_HIST        = 128;
 
 // ── FFT – fest, nicht konfigurierbar ─────────────────────────────────────────
-constexpr uint16_t FFT_SIZE      = 128;   // Samples/Frame → 6.4 s bei 20 Hz
-constexpr float    FFT_BIN_RES   = (float)SAMPLE_RATE_HZ / (float)FFT_SIZE;
-                                          // = 0.156 Hz/Bin
-constexpr uint8_t  FFT_BAR_PX   = 4;
-constexpr uint8_t  FFT_BARS     = DISPLAY_WIDTH / FFT_BAR_PX;  // 32
-constexpr uint8_t  FFT_LABEL_H  = 10;
-constexpr uint8_t  FFT_AXIS_H   = 8;
+constexpr uint16_t FFT_SIZE       = 128;   // Samples/Frame → 6.4 s bei 20 Hz
+constexpr float    FFT_BIN_RES    = (float)SAMPLE_RATE_HZ / (float)FFT_SIZE;
+                                           // = 0.156 Hz/Bin
+constexpr uint8_t  FFT_BAR_PX    = 4;
+constexpr uint8_t  FFT_BARS      = DISPLAY_WIDTH / FFT_BAR_PX;  // 32
+constexpr uint8_t  FFT_LABEL_H   = 10;
+constexpr uint8_t  FFT_AXIS_H    = 8;
 constexpr uint8_t  FFT_MAX_BAR_H = DISPLAY_HEIGHT - FFT_LABEL_H - FFT_AXIS_H;
 
-// KitchenAid Stufen-Frequenzen (planetare Umlauffrequenz)
-constexpr float KA_SPEEDS[] = { 1.00f, 1.58f, 2.25f, 3.00f, 3.75f, 4.67f };
+// KitchenAid Stufen-Frequenzen (planetare Umlauffrequenz des Frontkanals)
+constexpr float   KA_SPEEDS[]    = { 1.00f, 1.58f, 2.25f, 3.00f, 3.75f, 4.67f };
 constexpr uint8_t KA_SPEED_COUNT = 6;
 
 // ── Structs ───────────────────────────────────────────────────────────────────
@@ -91,7 +114,10 @@ struct DeviceConfig {
 };
 
 struct SampleSnapshot {
-    float    weight;
+    float    weightTotal;   // Summe aller drei Kanäle → geht in Puffer/Display/BT
+    float    weightRear;    // Kanal hinten
+    float    weightMid;     // Kanal mitte
+    float    weightFront;   // Kanal vorne → FFT-Quelle
     uint32_t sampleMs;
     bool     timeSynced;
 };
@@ -119,16 +145,18 @@ struct OfflineSample {
 
 // ── Hardware-Objekte ──────────────────────────────────────────────────────────
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
-HX711           scale;
+HX711           scaleRear;
+HX711           scaleMid;
+HX711           scaleFront;
 BluetoothSerial BT;
 Preferences     prefs;
 
 // ── Konfiguration & abgeleitete Werte ─────────────────────────────────────────
 DeviceConfig      config;
-float             calibrationFactor = 1.0f;
-volatile uint32_t publishPeriodMs   = 500;
-volatile uint32_t displayPeriodMs   = 500;
-uint8_t           displayMode       = 1;     // 0=groß, 1=Verlauf, 2=FFT
+float             calibrationFactor   = 1.0f;  // gemeinsam für alle drei Kanäle
+volatile uint32_t publishPeriodMs     = 500;
+volatile uint32_t displayPeriodMs     = 500;
+uint8_t           displayMode         = 1;     // 0=groß, 1=Verlauf, 2=FFT
 uint16_t          offlineBufferCapacity = 1200;
 
 // ── Queues ────────────────────────────────────────────────────────────────────
@@ -136,8 +164,11 @@ QueueHandle_t sampleQueue      = nullptr;
 QueueHandle_t scaleCmdQueue    = nullptr;
 QueueHandle_t scaleResultQueue = nullptr;
 
-// ── Aktueller Messwert ────────────────────────────────────────────────────────
-float    currentWeight       = 0.0f;
+// ── Aktuelle Messwerte ────────────────────────────────────────────────────────
+float    currentWeight       = 0.0f;    // Gesamtgewicht
+float    currentWeightRear   = 0.0f;
+float    currentWeightMid    = 0.0f;
+float    currentWeightFront  = 0.0f;
 int64_t  currentWeightTs     = 0;
 bool     currentWeightSynced = false;
 
@@ -161,11 +192,11 @@ double   fftImag[FFT_SIZE] = {};
 uint16_t fftSampleCount    = 0;
 
 // FFT-Ergebnisse (nur in btDisplayTask geschrieben und gelesen)
-float   fftPeakHz       = 0.f;
-float   fftPeakAmp      = 0.f;
-float   fftPeakHold     = 1.f;
+float   fftPeakHz          = 0.f;
+float   fftPeakAmp         = 0.f;
+float   fftPeakHold        = 1.f;
 float   fftBarHeights[FFT_BARS] = {};  // normiert 0..1 für OLED
-bool    fftResultReady  = false;
+bool    fftResultReady      = false;
 
 // ── Button ────────────────────────────────────────────────────────────────────
 bool     lastBtnState = HIGH;
@@ -175,9 +206,15 @@ bool displayTaskStarted = false;
 bool measureTaskStarted = false;
 
 // ============================================================
-//  BLOCK 2 — Config-Funktionen
+//  BLOCK 2 — Hilfsfunktionen
+//    loadFactor / saveFactor
+//    applyDerivedConfig / validateConfig / loadConfig / saveConfig
+//    btSend / btSendJson / sendError / sendConfig
+//    toPixel
+//    handleCommand
 // ============================================================
 
+// ── NVS: Kalibrierfaktor ──────────────────────────────────────────────────────
 float loadFactor() {
     prefs.begin(NVS_NAMESPACE, true);
     float f = prefs.getFloat(NVS_KEY_FACTOR, 1.0f);
@@ -191,22 +228,19 @@ void saveFactor(float f) {
     prefs.end();
 }
 
+// ── Config ────────────────────────────────────────────────────────────────────
 void applyDerivedConfig() {
-    // publishRateHz
     if (config.publishRateHz < 1)              config.publishRateHz = 1;
     if (config.publishRateHz > SAMPLE_RATE_HZ) config.publishRateHz = SAMPLE_RATE_HZ;
     publishPeriodMs = 1000UL / (uint32_t)config.publishRateHz;
 
-    // displayHz
     uint8_t dHz = config.displayHz;
     if (dHz < 1)  dHz = 1;
     if (dHz > 10) dHz = 10;
-    config.displayHz  = dHz;
-    displayPeriodMs   = 1000UL / dHz;
+    config.displayHz = dHz;
+    displayPeriodMs  = 1000UL / dHz;
 
-    // offlineBufferCapacity
-    uint32_t cap = (uint32_t)SAMPLE_RATE_HZ
-                 * (uint32_t)config.offlineBufferSeconds;
+    uint32_t cap = (uint32_t)SAMPLE_RATE_HZ * (uint32_t)config.offlineBufferSeconds;
     if (cap < SAMPLE_RATE_HZ)     cap = SAMPLE_RATE_HZ;
     if (cap > MAX_OFFLINE_BUFFER) cap = MAX_OFFLINE_BUFFER;
     offlineBufferCapacity = (uint16_t)cap;
@@ -217,7 +251,6 @@ void applyDerivedConfig() {
         offlineSendIdx  = 0;
     }
 
-    // FFT zurücksetzen wenn Config geändert
     fftSampleCount = 0;
     fftResultReady = false;
     fftPeakHold    = 1.f;
@@ -225,25 +258,25 @@ void applyDerivedConfig() {
 
 bool validateConfig(const DeviceConfig& c, String& err) {
     if (c.publishRateHz < 1 || c.publishRateHz > SAMPLE_RATE_HZ)
-        { err = "publishRateHz out of range (1–20)";     return false; }
+        { err = "publishRateHz out of range (1-20)";      return false; }
     if (c.avgSamples < 1 || c.avgSamples > 4)
-        { err = "avgSamples out of range (1–4)";         return false; }
+        { err = "avgSamples out of range (1-4)";          return false; }
     if (c.offlineBufferSeconds < 10 ||
         c.offlineBufferSeconds > MAX_OFFLINE_BUFFER_SECONDS)
-        { err = "offlineBufferSeconds out of range (10–180)"; return false; }
+        { err = "offlineBufferSeconds out of range (10-180)"; return false; }
     if (c.displayHz < 1 || c.displayHz > 10)
-        { err = "displayHz out of range (1–10)";         return false; }
+        { err = "displayHz out of range (1-10)";          return false; }
     return true;
 }
 
 void loadConfig() {
     prefs.begin(NVS_NAMESPACE, false);
     if (!prefs.isKey(NVS_KEY_INIT)) {
-        prefs.putBool  (NVS_KEY_INIT,   true);
-        prefs.putUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
-        prefs.putUChar (NVS_KEY_AVG,    DEFAULT_AVG_SAMPLES);
-        prefs.putUShort(NVS_KEY_BUFSEC, DEFAULT_OFFLINE_BUFFER_SECONDS);
-        prefs.putUChar (NVS_KEY_DISPHZ, DEFAULT_DISPLAY_HZ);
+        prefs.putBool  (NVS_KEY_INIT,    true);
+        prefs.putUShort(NVS_KEY_PRATE,   DEFAULT_PUBLISH_RATE_HZ);
+        prefs.putUChar (NVS_KEY_AVG,     DEFAULT_AVG_SAMPLES);
+        prefs.putUShort(NVS_KEY_BUFSEC,  DEFAULT_OFFLINE_BUFFER_SECONDS);
+        prefs.putUChar (NVS_KEY_DISPHZ,  DEFAULT_DISPLAY_HZ);
         prefs.putUChar (NVS_KEY_DISPMOD, 1);
     }
     config.publishRateHz        = prefs.getUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
@@ -266,10 +299,7 @@ bool saveConfig(const DeviceConfig& c) {
     return ok;
 }
 
-// ============================================================
-//  BLOCK 3 — BT-Helfer + handleCommand
-// ============================================================
-
+// ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
     if (btConnected) BT.print(s);
 }
@@ -297,10 +327,11 @@ void sendConfig(const char* typeName = "config") {
     d["offlineBufferSeconds"]  = config.offlineBufferSeconds;
     d["offlineBufferCapacity"] = offlineBufferCapacity;
     d["displayHz"]             = config.displayHz;
-    d["calibrationFactor"]     = calibrationFactor; 
+    d["calibrationFactor"]     = calibrationFactor;
     btSendJson(d);
 }
 
+// ── Display-Hilfsfunktion ─────────────────────────────────────────────────────
 uint8_t toPixel(float v, float lo, float hi) {
     if (hi <= lo) return PLOT_Y_BOTTOM;
     float r = (v - lo) / (hi - lo);
@@ -309,6 +340,7 @@ uint8_t toPixel(float v, float lo, float hi) {
         (int)PLOT_Y_TOP, (int)PLOT_Y_BOTTOM);
 }
 
+// ── BT-Kommandoverarbeitung ───────────────────────────────────────────────────
 void handleCommand(const String& json) {
     StaticJsonDocument<256> doc;
     if (deserializeJson(doc, json) != DeserializationError::Ok) return;
@@ -381,7 +413,11 @@ void handleCommand(const String& json) {
 }
 
 // ============================================================
-//  BLOCK 4 — measureTask (Core 1)
+//  BLOCK 3 — measureTask (Core 1)
+//
+//  Liest alle drei HX711-Kanäle mit 20 Hz, bildet das Gesamtgewicht
+//  und schreibt einen SampleSnapshot in die sampleQueue.
+//  Verarbeitet außerdem Tare- und Kalibrierkommandos von btDisplayTask.
 // ============================================================
 
 void measureTask(void* param) {
@@ -391,36 +427,58 @@ void measureTask(void* param) {
     ScaleCommand cmd;
 
     while (true) {
-        // Kommandos verarbeiten
+
+        // ── Kommandos verarbeiten ─────────────────────────────────────────────
         while (xQueueReceive(scaleCmdQueue, &cmd, 0) == pdTRUE) {
 
+            // ── Tare: alle drei Kanäle gleichzeitig ──────────────────────────
             if (cmd.type == ScaleCommandType::Tare) {
-                scale.tare();
+                scaleRear.tare();
+                scaleMid.tare();
+                scaleFront.tare();
+
                 ScaleResult r{};
-                r.ok = true;
+                r.ok    = true;
                 strlcpy(r.type, "tare_done", sizeof(r.type));
-                r.value = (float)scale.get_offset();
+                // Offset des Frontkanals als Referenzwert zurückmelden
+                r.value = (float)scaleFront.get_offset();
                 xQueueSend(scaleResultQueue, &r, 0);
 
+            // ── Kalibrierung: gemeinsamer Faktor aus Summe aller Rohwerte ────
             } else if (cmd.type == ScaleCommandType::Calibrate) {
-                scale.set_scale(1.0f);
-                float raw = scale.get_value(config.avgSamples * 4);
+                // Skalierung aufheben, um Rohwerte zu lesen
+                scaleRear.set_scale(1.0f);
+                scaleMid.set_scale(1.0f);
+                scaleFront.set_scale(1.0f);
+
+                // Mittelung über mehr Samples für Präzision
+                float rawRear  = scaleRear.get_value(config.avgSamples * 4);
+                float rawMid   = scaleMid.get_value(config.avgSamples * 4);
+                float rawFront = scaleFront.get_value(config.avgSamples * 4);
+                float rawSum   = rawRear + rawMid + rawFront;
+
                 ScaleResult r{};
-                if (raw == 0.0f || cmd.knownWeightG <= 0.0f) {
-                    scale.set_scale(calibrationFactor);
+                if (rawSum == 0.0f || cmd.knownWeightG <= 0.0f) {
+                    // Ungültig → Faktor wiederherstellen
+                    scaleRear.set_scale(calibrationFactor);
+                    scaleMid.set_scale(calibrationFactor);
+                    scaleFront.set_scale(calibrationFactor);
                     r.ok = false;
-                    strlcpy(r.type, "error",      sizeof(r.type));
-                    strlcpy(r.msg,  "Rohwert 0",  sizeof(r.msg));
+                    strlcpy(r.type, "error",     sizeof(r.type));
+                    strlcpy(r.msg,  "Rohwert 0", sizeof(r.msg));
                 } else {
-                    calibrationFactor = raw / cmd.knownWeightG;
-                    scale.set_scale(calibrationFactor);
+                    calibrationFactor = rawSum / cmd.knownWeightG;
+                    scaleRear.set_scale(calibrationFactor);
+                    scaleMid.set_scale(calibrationFactor);
+                    scaleFront.set_scale(calibrationFactor);
                     saveFactor(calibrationFactor);
-                    r.ok = true;
+                    r.ok    = true;
                     strlcpy(r.type, "factor", sizeof(r.type));
                     r.value = calibrationFactor;
                 }
                 xQueueSend(scaleResultQueue, &r, 0);
 
+            // ── Konfiguration übernehmen ──────────────────────────────────────
             } else if (cmd.type == ScaleCommandType::ApplyConfig) {
                 config = cmd.newConfig;
                 applyDerivedConfig();
@@ -432,13 +490,21 @@ void measureTask(void* param) {
             }
         }
 
-        // Feste 20 Hz Abtastrate
+        // ── 20 Hz Messung ─────────────────────────────────────────────────────
         uint32_t now = millis();
         if ((uint32_t)(now - lastSampleAt) >= SAMPLE_PERIOD_MS) {
             lastSampleAt += SAMPLE_PERIOD_MS;
-            if (scale.is_ready()) {
-                float w = scale.get_units(config.avgSamples);
-                SampleSnapshot s{ w, millis(), timeOffset != 0 };
+
+            if (scaleRear.is_ready() && scaleMid.is_ready() && scaleFront.is_ready()) {
+                float wRear  = scaleRear.get_units(config.avgSamples);
+                float wMid   = scaleMid.get_units(config.avgSamples);
+                float wFront = scaleFront.get_units(config.avgSamples);
+                float wTotal = wRear + wMid + wFront;
+
+                SampleSnapshot s{
+                    wTotal, wRear, wMid, wFront,
+                    millis(), timeOffset != 0
+                };
                 xQueueSend(sampleQueue, &s, 0);
             }
         }
@@ -448,20 +514,25 @@ void measureTask(void* param) {
 }
 
 // ============================================================
-//  BLOCK 5 — btDisplayTask (Core 0)
+//  BLOCK 4 — btDisplayTask (Core 0)
+//
+//  Verarbeitet Snapshots aus der Queue:
+//    - Gesamtgewicht  → Display-History, Offline-Puffer, BT-Batch
+//    - Frontkanal     → FFT-Eingangsdaten
+//  Außerdem: BT-Empfang/Senden, Display-Update, Button-Debounce
 // ============================================================
 
 void btDisplayTask(void* param) {
     displayTaskStarted = true;
 
-    String   inBuf      = "";
+    String   inBuf       = "";
     uint32_t lastDisplay = 0;
     uint32_t lastPublish = 0;
 
     while (true) {
         uint32_t now = millis();
 
-        // ── Button ───────────────────────────────────────────────────────────
+        // ── Button ────────────────────────────────────────────────────────────
         bool btn = digitalRead(BUTTON_PIN);
         if (lastBtnState == HIGH && btn == LOW) {
             btnPressedAt = now;
@@ -483,118 +554,112 @@ void btDisplayTask(void* param) {
         }
         lastBtnState = btn;
 
-        // ── Samples übernehmen ────────────────────────────────────────────────
+        // ── Snapshots verarbeiten ─────────────────────────────────────────────
         SampleSnapshot snap;
         while (xQueueReceive(sampleQueue, &snap, 0) == pdTRUE) {
-            currentWeight       = snap.weight;
-            currentWeightTs     = timeOffset + (int64_t)snap.sampleMs;
-            currentWeightSynced = snap.timeSynced;
 
-            // [1] Display-History
-            dispHist[dispHistIdx] = snap.weight;
+            // Laufzeitwerte aktualisieren (alle Kanäle + Gesamtgewicht)
+            currentWeight        = snap.weightTotal;
+            currentWeightRear    = snap.weightRear;
+            currentWeightMid     = snap.weightMid;
+            currentWeightFront   = snap.weightFront;
+            currentWeightTs      = timeOffset + (int64_t)snap.sampleMs;
+            currentWeightSynced  = snap.timeSynced;
+
+            // [1] Display-History: Gesamtgewicht
+            dispHist[dispHistIdx] = snap.weightTotal;
             dispHistIdx = (dispHistIdx + 1) % DISP_HIST;
             if (dispHistFill < DISP_HIST) dispHistFill++;
 
-            // [2] Offline-Ringpuffer
+            // [2] Offline-Ringpuffer: Gesamtgewicht
             offlineBuffer[offlineWriteIdx] = {
-                currentWeightTs, snap.weight, snap.timeSynced
+                currentWeightTs, snap.weightTotal, snap.timeSynced
             };
             offlineWriteIdx = (offlineWriteIdx + 1) % offlineBufferCapacity;
             if (offlineWriteIdx == offlineSendIdx)
                 offlineSendIdx = (offlineSendIdx + 1) % offlineBufferCapacity;
 
-            // [3] FFT-Buffer
-            fftReal[fftSampleCount] = (double)snap.weight;
-            fftSampleCount++;
-
-            // ── FFT berechnen wenn Buffer voll ────────────────────────────────
-            if (fftSampleCount >= FFT_SIZE) {
-                fftSampleCount = 0;
-
-                // DC entfernen (Mittelwert abziehen)
-                double mean = 0.0;
-                for (uint16_t i = 0; i < FFT_SIZE; i++) mean += fftReal[i];
-                mean /= (double)FFT_SIZE;
-                for (uint16_t i = 0; i < FFT_SIZE; i++) {
-                    fftReal[i] -= mean;
-                    fftImag[i]  = 0.0;
-                }
-
-                // FFT
-                ArduinoFFT<double> fft(fftReal, fftImag, FFT_SIZE,
-                                       (double)SAMPLE_RATE_HZ);
-                fft.windowing(FFTWindow::Hamming, FFTDirection::Forward);
-                fft.compute(FFTDirection::Forward);
-                fft.complexToMagnitude();
-                // fftReal[i] enthält jetzt Amplituden (Magnitude)
-
-                // Maximale Amplitude (Bins 1..N/2-1, Bin 0 = DC verwerfen)
-                double maxAmp = 0.001;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
-                    if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
-
-                // Peak-Frequenz
-                double peakAmp = 0.0;
-                uint16_t peakBin = 1;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
-                    if (fftReal[i] > peakAmp) {
-                        peakAmp  = fftReal[i];
-                        peakBin  = i;
-                    }
-                }
-
-                // Peak-Hold (langsames Abklingen)
-                if (peakAmp > (double)fftPeakHold) fftPeakHold = (float)peakAmp;
-                else                                fftPeakHold *= 0.98f;
-                if (fftPeakHold < 1.f)              fftPeakHold = 1.f;
-
-                fftPeakHz  = peakBin * FFT_BIN_RES;
-                fftPeakAmp = (float)peakAmp;
-
-                // Bins auf 32 Display-Balken verteilen (gleichmäßig über Nyquist)
-                float nyquist = SAMPLE_RATE_HZ / 2.0f;
-                for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
-                    float    fLow    =  bar      * nyquist / FFT_BARS;
-                    float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
-                    uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
-                    uint16_t binHigh = max(binLow + 1,
-                                          (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
-                    if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
-
-                    double barMax = 0.0;
-                    for (uint16_t bin = binLow; bin < binHigh; bin++)
-                        if (fftReal[bin] > barMax) barMax = fftReal[bin];
-
-                    fftBarHeights[bar] = (float)(barMax / fftPeakHold);
-                }
-                fftResultReady = true;
-
-                // ── FFT-Ergebnis per BT senden ────────────────────────────────
-                if (btConnected) {
-                    // Bins 0..FFT_SIZE/2-1 normiert auf uint8 0–255
-                    // Bin 0 (DC) immer 0
-                    String msg;
-                    msg.reserve(300);
-                    msg  = "{\"type\":\"fft_result\"";
-                    msg += ",\"peakHz\":";  msg += String(fftPeakHz, 3);
-                    msg += ",\"peakAmp\":"; msg += String(fftPeakAmp, 1);
-                    msg += ",\"binRes\":";  msg += String(FFT_BIN_RES, 4);
-                    msg += ",\"fs\":";      msg += SAMPLE_RATE_HZ;
-                    msg += ",\"bins\":[0";  // Bin 0 = DC = 0
-                    for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
-                        uint8_t val = (uint8_t)constrain(
-                            (int)(fftReal[i] / maxAmp * 255.0), 0, 255);
-                        msg += ",";
-                        msg += val;
-                    }
-                    msg += "]}\n";
-                    btSend(msg);
-                }
-
-                // Serial Debug
-                Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n",
-                              fftPeakHz, fftPeakAmp, fftPeakHold);
+            // [3] FFT-Eingabe: nur Frontkanal
+            if (fftSampleCount < FFT_SIZE) {
+                fftReal[fftSampleCount] = snap.weightFront;
+                fftImag[fftSampleCount] = 0.0;
+                fftSampleCount++;
             }
+        }
+
+        // ── FFT berechnen wenn Frame voll ─────────────────────────────────────
+        if (fftSampleCount >= FFT_SIZE) {
+            fftSampleCount = 0;
+
+            // Hamming-Fensterung + FFT
+            ArduinoFFT<double> fft(fftReal, fftImag, FFT_SIZE, (double)SAMPLE_RATE_HZ);
+            fft.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+            fft.compute(FFTDirection::Forward);
+            fft.complexToMagnitude();
+
+            // Maximale Amplitude (Bin 0 = DC verwerfen)
+            double maxAmp = 0.001;
+            for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
+                if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
+
+            // Peak-Frequenz bestimmen
+            double   peakAmp = 0.0;
+            uint16_t peakBin = 1;
+            for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
+                if (fftReal[i] > peakAmp) {
+                    peakAmp = fftReal[i];
+                    peakBin = i;
+                }
+            }
+
+            // Peak-Hold (langsames Abklingen)
+            if (peakAmp > (double)fftPeakHold) fftPeakHold = (float)peakAmp;
+            else                                fftPeakHold *= 0.98f;
+            if (fftPeakHold < 1.f)              fftPeakHold = 1.f;
+
+            fftPeakHz  = peakBin * FFT_BIN_RES;
+            fftPeakAmp = (float)peakAmp;
+
+            // Bins auf 32 Display-Balken verteilen
+            float nyquist = SAMPLE_RATE_HZ / 2.0f;
+            for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
+                float    fLow    =  bar      * nyquist / FFT_BARS;
+                float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
+                uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
+                uint16_t binHigh = max(binLow + 1,
+                                       (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
+                if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
+
+                double barMax = 0.0;
+                for (uint16_t bin = binLow; bin < binHigh; bin++)
+                    if (fftReal[bin] > barMax) barMax = fftReal[bin];
+
+                fftBarHeights[bar] = (float)(barMax / fftPeakHold);
+            }
+            fftResultReady = true;
+
+            // FFT-Ergebnis per BT senden
+            if (btConnected) {
+                String msg;
+                msg.reserve(300);
+                msg  = "{\"type\":\"fft_result\"";
+                msg += ",\"peakHz\":";  msg += String(fftPeakHz, 3);
+                msg += ",\"peakAmp\":"; msg += String(fftPeakAmp, 1);
+                msg += ",\"binRes\":";  msg += String(FFT_BIN_RES, 4);
+                msg += ",\"fs\":";      msg += SAMPLE_RATE_HZ;
+                msg += ",\"bins\":[0";
+                for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
+                    uint8_t val = (uint8_t)constrain(
+                        (int)(fftReal[i] / maxAmp * 255.0), 0, 255);
+                    msg += ",";
+                    msg += val;
+                }
+                msg += "]}\n";
+                btSend(msg);
+            }
+
+            Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n",
+                          fftPeakHz, fftPeakAmp, fftPeakHold);
         }
 
         // ── ScaleResults verarbeiten ──────────────────────────────────────────
@@ -617,7 +682,7 @@ void btDisplayTask(void* param) {
             }
         }
 
-        // ── BT: Messwert-Batch senden ─────────────────────────────────────────
+        // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
         if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
@@ -666,28 +731,29 @@ void btDisplayTask(void* param) {
             lastDisplay = now;
             u8g2.clearBuffer();
 
+            // Gesamtgewicht formatieren
             char wBuf[24];
             if (currentWeight >= 1000.0f || currentWeight <= -1000.0f)
                 snprintf(wBuf, sizeof(wBuf), "%.3f kg", currentWeight / 1000.0f);
             else
-                snprintf(wBuf, sizeof(wBuf), "%.1f g",  currentWeight);
+                snprintf(wBuf, sizeof(wBuf), "%.1f g", currentWeight);
 
-            // BT-Status-Indikator (für alle Modi)
+            // BT-Statusindikator (in allen Modi)
             auto drawBtIndicator = [&]() {
                 if      (btConnected && timeOffset != 0) u8g2.drawDisc  (124, 4, 3);
                 else if (btConnected)                    u8g2.drawCircle(124, 4, 3);
                 else                                     u8g2.drawFrame (120, 1, 7, 7);
             };
 
+            // ── Modus 0: Großes Gewicht ───────────────────────────────────────
             if (displayMode == 0) {
-                // ── Modus 0: Großes Gewicht ───────────────────────────────────
                 u8g2.setFont(u8g2_font_10x20_tf);
                 uint8_t tw = u8g2.getStrWidth(wBuf);
                 u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, 42, wBuf);
                 drawBtIndicator();
 
+            // ── Modus 1: Gewicht + Verlaufsgraph ─────────────────────────────
             } else if (displayMode == 1) {
-                // ── Modus 1: Gewicht + Verlaufsgraph ──────────────────────────
                 u8g2.setFont(u8g2_font_9x15B_tf);
                 uint8_t tw = u8g2.getStrWidth(wBuf);
                 u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, VALUE_HEIGHT - 3, wBuf);
@@ -713,8 +779,8 @@ void btDisplayTask(void* param) {
                     }
                 }
 
+            // ── Modus 2: FFT-Spektrum (Frontkanal) ───────────────────────────
             } else {
-                // ── Modus 2: FFT-Spektrum ─────────────────────────────────────
                 u8g2.setFont(u8g2_font_5x8_tf);
 
                 if (fftResultReady) {
@@ -738,28 +804,27 @@ void btDisplayTask(void* param) {
                                            DISPLAY_HEIGHT - FFT_LABEL_H - FFT_AXIS_H);
                     }
 
-                    // Peak-Frequenz oben links
-                    char fBuf[20];
+                    // Peak-Frequenz als Text
+                    char fBuf[16];
                     snprintf(fBuf, sizeof(fBuf), "%.2fHz", fftPeakHz);
                     u8g2.drawStr(0, FFT_LABEL_H - 1, fBuf);
 
-                    // Trennlinie
-                    u8g2.drawHLine(0, DISPLAY_HEIGHT - FFT_AXIS_H, DISPLAY_WIDTH);
-
-                    // Achsenbeschriftung: 0 | Mitte | Nyquist
-                    u8g2.drawStr(0,                   DISPLAY_HEIGHT - 1, "0");
-                    u8g2.drawStr(DISPLAY_WIDTH / 2 - 6, DISPLAY_HEIGHT - 1, "5Hz");
-                    u8g2.drawStr(DISPLAY_WIDTH - 20,  DISPLAY_HEIGHT - 1, "10Hz");
+                    // Achsenbeschriftung: Nyquist
+                    char nyBuf[8];
+                    snprintf(nyBuf, sizeof(nyBuf), "%dHz", SAMPLE_RATE_HZ / 2);
+                    uint8_t nyW = u8g2.getStrWidth(nyBuf);
+                    u8g2.drawStr(DISPLAY_WIDTH - nyW, DISPLAY_HEIGHT - 1, nyBuf);
+                    u8g2.drawStr(0, DISPLAY_HEIGHT - 1, "0");
 
                 } else {
-                    // Noch nicht genug Samples für FFT
-                    u8g2.drawStr(4, 25, "FFT wird berechnet");
-                    char wBuf2[24];
-                    uint16_t remaining = FFT_SIZE - fftSampleCount;
-                    snprintf(wBuf2, sizeof(wBuf2), "noch %d s...",
-                             remaining / SAMPLE_RATE_HZ);
-                    u8g2.drawStr(24, 40, wBuf2);
+                    // Noch kein FFT-Ergebnis: Füllstand anzeigen
+                    char pBuf[16];
+                    snprintf(pBuf, sizeof(pBuf), "FFT %d/%d",
+                             fftSampleCount, FFT_SIZE);
+                    u8g2.drawStr(0, 36, pBuf);
+                    u8g2.drawStr(0, 52, "(Front)");
                 }
+                drawBtIndicator();
             }
 
             u8g2.sendBuffer();
@@ -770,7 +835,7 @@ void btDisplayTask(void* param) {
 }
 
 // ============================================================
-//  BLOCK 6 — setup / loop
+//  BLOCK 5 — setup / loop
 // ============================================================
 
 void setup() {
@@ -780,6 +845,7 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     Wire.begin();
 
+    // OLED initialisieren
     if (!u8g2.begin()) {
         Serial.println("OLED init failed");
         while (true) delay(1000);
@@ -792,60 +858,69 @@ void setup() {
     u8g2.drawStr(8, 46, "Weight");
     u8g2.sendBuffer();
 
+    // Konfiguration und Kalibrierfaktor aus NVS laden
     loadConfig();
     calibrationFactor = loadFactor();
+    Serial.printf("[setup] calibrationFactor: %.6f\n", calibrationFactor);
 
-    // HX711 initialisieren
-    scale.begin(HX711_DOUT, HX711_SCK);
+    // ── HX711 initialisieren ─────────────────────────────────────────────────
+    scaleRear.begin (HX711_REAR_DOUT,  HX711_REAR_SCK);
+    scaleMid.begin  (HX711_MID_DOUT,   HX711_MID_SCK);
+    scaleFront.begin(HX711_FRONT_DOUT, HX711_FRONT_SCK);
+
+    // Auf alle drei HX711 warten (max. 3 s)
     uint32_t t = millis() + 3000;
-    while (!scale.is_ready() && millis() < t) delay(200);
-    if (!scale.is_ready()) {
+    while (!(scaleRear.is_ready() && scaleMid.is_ready() && scaleFront.is_ready())
+           && millis() < t) {
+        delay(200);
+    }
+    if (!(scaleRear.is_ready() && scaleMid.is_ready() && scaleFront.is_ready())) {
+        Serial.println("[setup] Mindestens ein HX711 nicht bereit!");
         u8g2.clearBuffer();
-        u8g2.drawStr(0, 32, "HX711 fehlt!");
+        u8g2.setFont(u8g2_font_9x15B_tf);
+        u8g2.drawStr(0, 24, "HX711 fehlt!");
+        u8g2.setFont(u8g2_font_5x8_tf);
+        u8g2.drawStr(0, 40, "Rear / Mid / Front");
+        u8g2.drawStr(0, 52, "Pruefen & Reset");
         u8g2.sendBuffer();
         while (true) delay(1000);
     }
-    scale.tare();
-    scale.set_scale(calibrationFactor);
 
-    // Puffer / FFT zurücksetzen
-    offlineWriteIdx = 0;
-    offlineSendIdx  = 0;
-    fftSampleCount  = 0;
-    memset(fftReal, 0, sizeof(fftReal));
-    memset(fftImag, 0, sizeof(fftImag));
+    // Tara + gemeinsamen Kalibrierfaktor setzen
+    scaleRear.tare();
+    scaleMid.tare();
+    scaleFront.tare();
+    scaleRear.set_scale(calibrationFactor);
+    scaleMid.set_scale(calibrationFactor);
+    scaleFront.set_scale(calibrationFactor);
 
-    // Queues anlegen
-    // sampleQueue Größe 4: Puffer damit bei FFT-Berechnung keine Samples verloren gehen
-    sampleQueue      = xQueueCreate(4, sizeof(SampleSnapshot));
-    scaleCmdQueue    = xQueueCreate(4, sizeof(ScaleCommand));
-    scaleResultQueue = xQueueCreate(4, sizeof(ScaleResult));
+    Serial.println("[setup] Alle 3 HX711 bereit und tariert.");
 
-    if (!sampleQueue || !scaleCmdQueue || !scaleResultQueue) {
-        Serial.println("Queue-Fehler");
-        while (true) delay(1000);
-    }
+    // ── FreeRTOS-Queues anlegen ───────────────────────────────────────────────
+    sampleQueue      = xQueueCreate(4,  sizeof(SampleSnapshot));
+    scaleCmdQueue    = xQueueCreate(4,  sizeof(ScaleCommand));
+    scaleResultQueue = xQueueCreate(4,  sizeof(ScaleResult));
 
-    // Bluetooth
+    // ── Bluetooth ────────────────────────────────────────────────────────────
+    BT.begin(BT_DEVICE_NAME);
     BT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t*) {
-        if      (event == ESP_SPP_SRV_OPEN_EVT) { btConnected = true;  }
-        else if (event == ESP_SPP_CLOSE_EVT)    { btConnected = false; timeOffset = 0; }
+        if      (event == ESP_SPP_SRV_OPEN_EVT)  btConnected = true;
+        else if (event == ESP_SPP_CLOSE_EVT)      btConnected = false;
     });
-    if (!BT.begin(BT_DEVICE_NAME)) {
-        Serial.println("BT init failed");
-        while (true) delay(1000);
-    }
+    Serial.printf("[setup] BT bereit als \"%s\"\n", BT_DEVICE_NAME);
 
-    // Tasks starten
-    // btDisplayTask Stack 12288: ArduinoFFT (128 doubles) + String-Builder brauchen Platz
-    xTaskCreatePinnedToCore(measureTask,   "Messen",     4096,  NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(btDisplayTask, "BT+Display", 12288, NULL, 1, NULL, 0);
+    // ── Tasks starten ─────────────────────────────────────────────────────────
+    // measureTask auf Core 1 (Arduino-Standard-Core), hohe Priorität
+    xTaskCreatePinnedToCore(measureTask,   "measure",   4096, nullptr, 2, nullptr, 1);
+    // btDisplayTask auf Core 0, normale Priorität
+    xTaskCreatePinnedToCore(btDisplayTask, "btDisplay", 8192, nullptr, 1, nullptr, 0);
 
-    Serial.println("Bereit.");
-    Serial.printf("sampleRateHz=%d (fest) | FFT_SIZE=%d | binRes=%.3fHz\n",
-                  SAMPLE_RATE_HZ, FFT_SIZE, FFT_BIN_RES);
+    // Warten bis beide Tasks gestartet sind
+    while (!measureTaskStarted || !displayTaskStarted) delay(10);
+    Serial.println("[setup] Tasks gestartet. System bereit.");
 }
 
 void loop() {
-    vTaskDelay(portMAX_DELAY);
+    // Beide Tasks laufen eigenständig; loop bleibt leer.
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

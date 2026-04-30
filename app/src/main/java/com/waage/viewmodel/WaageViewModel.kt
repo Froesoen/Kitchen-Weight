@@ -179,6 +179,7 @@ class WaageViewModel(
         if (!canUseBluetooth()) return
         try {
             service()?.sendGetConfig()
+            service()?.sendGetFactor()
         } catch (e: SecurityException) {
             Log.e(TAG, "getconfig", e)
         }
