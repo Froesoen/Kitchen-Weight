@@ -296,8 +296,16 @@ class WaageViewModel(
                         )
                     }
                 }
+				
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done")
+                    Log.d(TAG, "sync_done → buffer abrufen")
+                    if (canUseBluetooth()) {
+                        try {
+                            service()?.sendGetBuffer()
+                        } catch (e: SecurityException) {
+                            Log.e(TAG, "sendGetBuffer", e)
+                        }
+                    }
                 }
 
                 is WaageMessage.Config -> {
