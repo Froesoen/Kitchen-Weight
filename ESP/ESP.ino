@@ -496,18 +496,16 @@ void measureTask(void* param) {
         if ((uint32_t)(now - lastSampleAt) >= SAMPLE_PERIOD_MS) {
             lastSampleAt += SAMPLE_PERIOD_MS;
 
-            if (scaleRear.is_ready() && scaleMid.is_ready() && scaleFront.is_ready()) {
-                float wRear  = scaleRear.get_units(config.avgSamples);
-                float wMid   = scaleMid.get_units(config.avgSamples);
-                float wFront = scaleFront.get_units(config.avgSamples);
-                float wTotal = wRear + wMid + wFront;
+            float wRear  = scaleRear.get_units(config.avgSamples);
+            float wMid   = scaleMid.get_units(config.avgSamples);
+            float wFront = scaleFront.get_units(config.avgSamples);
+            float wTotal = wRear + wMid + wFront;
 
-                SampleSnapshot s{
-                    wTotal, wRear, wMid, wFront,
-                    millis(), timeOffset != 0
-                };
-                xQueueSend(sampleQueue, &s, 0);
-            }
+            SampleSnapshot s{
+                wTotal, wRear, wMid, wFront,
+                millis(), timeOffset != 0
+            };
+            xQueueSend(sampleQueue, &s, 0);
         }
 
         taskYIELD();
@@ -912,9 +910,9 @@ void setup() {
 
     // ── Tasks starten ─────────────────────────────────────────────────────────
     // measureTask auf Core 1 (Arduino-Standard-Core), hohe Priorität
-    xTaskCreatePinnedToCore(measureTask,   "measure",   4096, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(measureTask,   "measure",   4096, nullptr, 1, nullptr, 1);
     // btDisplayTask auf Core 0, normale Priorität
-    xTaskCreatePinnedToCore(btDisplayTask, "btDisplay", 8192, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(btDisplayTask, "btDisplay", 12288, nullptr, 1, nullptr, 0);
 
     // Warten bis beide Tasks gestartet sind
     while (!measureTaskStarted || !displayTaskStarted) delay(10);
