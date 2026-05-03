@@ -472,6 +472,7 @@ fun ExportDialog(
     onExport: (String) -> Unit
 ) {
     var fileName by remember { mutableStateOf(defaultName) }
+    val nameOk = fileName.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -480,26 +481,47 @@ fun ExportDialog(
             OutlinedTextField(
                 value = fileName,
                 onValueChange = { fileName = it },
-                label = { Text("Dateiname") },
+                label = { Text("Messungsname") },
+                isError = !nameOk,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    onExport(fileName)
-                    onDismiss()
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Exportieren")
+                // Abbrechen
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Abbrechen",
+                        tint = Color(0xFFF44336)
+                    )
+                }
+                // Exportieren
+                IconButton(
+                    onClick = {
+                        onExport(fileName)
+                        onDismiss()
+                    },
+                    enabled = nameOk,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Exportieren",
+                        tint = if (nameOk) Color(0xFF4CAF50) else Color.Gray
+                    )
+                }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Abbrechen")
-            }
-        }
+        dismissButton = {}
     )
 }
 

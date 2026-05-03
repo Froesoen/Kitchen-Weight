@@ -23,11 +23,18 @@ class WeightBuffer {
         const val MAX_SAMPLES = 7200
     }
 
-    private val buffer = ArrayDeque<WeightSample>(MAX_SAMPLES)
+    private val buffer           = ArrayDeque<WeightSample>(MAX_SAMPLES)
+    private val knownTimestamps  = HashSet<Long>(MAX_SAMPLES * 2)
 
     fun add(sample: WeightSample) {
-        if (buffer.size >= MAX_SAMPLES) buffer.removeFirst()
+        // Duplikat: gleicher Zeitstempel bereits vorhanden → verwerfen
+        if (sample.timestampMs in knownTimestamps) return
+        if (buffer.size >= MAX_SAMPLES) {
+            val removed = buffer.removeFirst()
+            knownTimestamps.remove(removed.timestampMs)
+        }
         buffer.addLast(sample)
+        knownTimestamps.add(sample.timestampMs)
     }
 
     fun addAll(samples: List<WeightSample>) {
@@ -37,10 +44,13 @@ class WeightBuffer {
     fun getSamples(range: TimeRange): List<WeightSample> {
         if (buffer.isEmpty()) return emptyList()
         val cutoff = System.currentTimeMillis() - range.seconds * 1000L
-        return buffer.filter { it.timestampMs >= cutoff }
+        return buffer
+            .filter { it.timestampMs >= cutoff }
+            .sortedBy { it.timestampMs }    // korrekte Reihenfolge auch nach Reconnect
     }
 
-    fun getLatest(n: Int): List<WeightSample> = buffer.takeLast(n)
+    fun getLatest(n: Int): List<WeightSample> =
+        buffer.takeLast(n).sortedBy { it.timestampMs }
 
     data class Stats(
         val min: Float,
@@ -54,14 +64,18 @@ class WeightBuffer {
         if (samples.isEmpty()) return null
         val weights = samples.map { it.weightG }
         return Stats(
-            min = weights.minOrNull() ?: 0f,
-            max = weights.maxOrNull() ?: 0f,
-            avg = weights.average().toFloat(),
+            min   = weights.minOrNull() ?: 0f,
+            max   = weights.maxOrNull() ?: 0f,
+            avg   = weights.average().toFloat(),
             count = weights.size
         )
     }
 
-    fun clear() = buffer.clear()
+    fun clear() {
+        buffer.clear()
+        knownTimestamps.clear()
+    }
+
     fun size() = buffer.size
 }
 

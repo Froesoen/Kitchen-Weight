@@ -68,6 +68,7 @@ class WaageViewModel(
     private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
     private var btService: BluetoothService? = null
+	private val pendingBufferSamples = mutableListOf<WeightSample>()
 
     init {
         _uiState.value = _uiState.value.copy(
@@ -273,9 +274,38 @@ class WaageViewModel(
                         }
                     }
                 }
+				is WaageMessage.BufferStart -> {
+                    Log.d(TAG, "buffer_start: ${msg.count} Samples angekündigt")
+                    pendingBufferSamples.clear()
+                }
 
+                is WaageMessage.BufferSample -> {
+                    pendingBufferSamples.add(
+                        WeightSample(msg.weightG, msg.timestampMs, msg.synced)
+                    )
+                }
+
+                is WaageMessage.BufferEnd -> {
+                    Log.d(TAG, "buffer_end: ${pendingBufferSamples.size} Samples empfangen")
+                    if (pendingBufferSamples.isNotEmpty()) {
+                        buffer.addAll(pendingBufferSamples.sortedBy { it.timestampMs })
+                        pendingBufferSamples.clear()
+                        recalculateUi()
+                        checkAlarm(
+                            _uiState.value.graphSamples.lastOrNull()?.weightG ?: 0f
+                        )
+                    }
+                }
+				
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done")
+                    Log.d(TAG, "sync_done → buffer abrufen")
+                    if (canUseBluetooth()) {
+                        try {
+                            service()?.sendGetBuffer()
+                        } catch (e: SecurityException) {
+                            Log.e(TAG, "sendGetBuffer", e)
+                        }
+                    }
                 }
 
                 is WaageMessage.Config -> {

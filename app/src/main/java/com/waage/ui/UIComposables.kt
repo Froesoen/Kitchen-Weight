@@ -201,9 +201,16 @@ fun WeightGraph(
                 minVal -= margin; maxVal += margin
                 val range       = (maxVal - minVal).takeIf { it != 0f } ?: 1f
 
+                val nowMs        = System.currentTimeMillis()
+                val rangeMs      = selectedRange.seconds * 1000L
+                val windowStartMs = nowMs - rangeMs
+
                 fun yOf(v: Float) = plotBottom - ((v - minVal) / range) * plotH
-				fun xOf(i: Int)   = if (samples.size <= 1) plotLeft + plotW / 2f
-					else plotLeft + i.toFloat() / (samples.size - 1) * plotW
+                fun xOf(timestampMs: Long): Float {
+                    val frac = ((timestampMs - windowStartMs).toFloat() / rangeMs.toFloat())
+                        .coerceIn(0f, 1f)
+                    return plotLeft + frac * plotW
+                }
 
                 // ── 1. Alarm-Zonen Rechtecke ──────────────────────────────────
                 val hasUpper = !alarmUpperG.isNaN()
@@ -329,8 +336,7 @@ fun WeightGraph(
                     Offset(plotLeft + plotW, plotBottom),
                     1f
                 )
-                val nowMs       = System.currentTimeMillis()
-                val rangeMs     = selectedRange.seconds * 1000L
+
                 val useMinutes  = selectedRange.seconds > 60
                 val xTickCount  = 5
                 val xTickPaint  = android.graphics.Paint().apply {
@@ -360,7 +366,7 @@ fun WeightGraph(
                 // ── 7. Kurve ──────────────────────────────────────────────────
                 val path = Path()
                 samples.forEachIndexed { i, s ->
-                    val x = xOf(i)
+                    val x = xOf(s.timestampMs)
                     val y = yOf(s.weightG)
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
@@ -371,12 +377,14 @@ fun WeightGraph(
                 drawCircle(
                     Color(0xFFFFC107),
                     radius = 5f,
-                    center = Offset(xOf(peakIdx), yOf(weights[peakIdx]))
+                    center = Offset(
+                        xOf(samples[peakIdx].timestampMs),
+                        yOf(weights[peakIdx])
+                    )
                 )
-
                 // ── 9. Aktueller-Wert-Punkt (weiß, rechts) ───────────────────
                 val lastIdx = samples.size - 1
-                val lastX   = xOf(lastIdx)
+                val lastX   = xOf(samples[lastIdx].timestampMs)
                 val lastY   = yOf(weights[lastIdx])
                 // Vertikale Linie
                 drawLine(

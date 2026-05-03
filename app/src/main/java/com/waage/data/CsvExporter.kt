@@ -68,6 +68,9 @@ class CsvExporter(private val context: Context) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 
-        context.startActivity(Intent.createChooser(intent, "CSV exportieren"))
+        val chooser = Intent.createChooser(intent, "CSV exportieren").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
     }
 }
