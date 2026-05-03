@@ -7,9 +7,11 @@ Bugfixes
 - Zeit-Ticks stimmen nicht, wenn Daten nicht für den ganzen Bereich vorliegen --> Plot mit NaNs auffüllen
 - Beim Start sollten gepufferte Daten (volle Puffer-Größe übertragen werden) Wie groß ist der aktuell?
 - FFT-Spektrum nur bei Mindestamplitude von 2g
+- Icon in Titelzeile größer + Versionsangabe
 	
 Erweiterungen
 - Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
+- Saubere Versionierung für App und ESP einführen
 - Zielbereich überlegen als Alternative zu Alarmen
 - Tongeber an ESP
 	- Schwellwert aus App vorgegeben

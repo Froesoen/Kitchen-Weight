@@ -43,18 +43,19 @@
 #include <arduinoFFT.h>
 
 // ── Hardware-Pins ─────────────────────────────────────────────────────────────
-//  HX711 #1 – hinten  (bestehender Kanal bleibt auf 25/26)
+//  HX711 #1 – hinten
 #define HX711_REAR_DOUT   25
 #define HX711_REAR_SCK    26
 //  HX711 #2 – mitte
-#define HX711_MID_DOUT    33
-#define HX711_MID_SCK     27
-//  HX711 #3 – vorne (FFT-Quelle)
-#define HX711_FRONT_DOUT  13
-#define HX711_FRONT_SCK   14
+#define HX711_MID_DOUT    27
+#define HX711_MID_SCK     14
+//  HX711 #3 – vorne
+#define HX711_FRONT_DOUT  18
+#define HX711_FRONT_SCK   19
 //  Sonstiges
 #define BUTTON_PIN        32
-// Alle drei HX711: RATE-Pin auf HIGH (3.3V) → 80 SPS Modus
+// Alle drei HX711: Planmäßig RATE-Pin auf HIGH (3.3V) → 80 SPS Modus
+// Bisher nicht umgesetzt
 
 // ── NVS-Schlüssel ─────────────────────────────────────────────────────────────
 #define BT_DEVICE_NAME  "Waage_ESP32"
