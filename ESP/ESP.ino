@@ -79,9 +79,10 @@ constexpr uint16_t DEFAULT_OFFLINE_BUFFER_SECONDS = 60;
 constexpr uint8_t  DEFAULT_DISPLAY_HZ             = 2;
 
 // ── Puffer-Limits ─────────────────────────────────────────────────────────────
-// Max. offlineBufferSeconds = 180 s → 20 × 180 = 3600 Samples
-constexpr uint16_t MAX_OFFLINE_BUFFER_SECONDS = 180;
-constexpr uint16_t MAX_OFFLINE_BUFFER         = 3600;
+// Max. offlineBufferSeconds = 90 s → 20 × 90 = 1800 Samples
+// (OfflineSample hat 24 Byte durch 3 Kanäle, RAM-Budget bleibt gleich wie vorher)
+constexpr uint16_t MAX_OFFLINE_BUFFER_SECONDS = 90;
+constexpr uint16_t MAX_OFFLINE_BUFFER         = 1800;
 
 // ── Display-Layout ────────────────────────────────────────────────────────────
 constexpr uint8_t DISPLAY_WIDTH    = 128;
@@ -191,8 +192,8 @@ uint8_t dispHistIdx  = 0;
 uint8_t dispHistFill = 0;
 
 // ── FFT ───────────────────────────────────────────────────────────────────────
-double   fftReal[FFT_SIZE] = {};
-double   fftImag[FFT_SIZE] = {};
+float    fftReal[FFT_SIZE] = {};
+float    fftImag[FFT_SIZE] = {};
 uint16_t fftSampleCount    = 0;
 
 // FFT-Ergebnisse (nur in btDisplayTask geschrieben und gelesen)
@@ -624,18 +625,18 @@ void btDisplayTask(void* param) {
 
             } else {
                 // Hamming-Fensterung + FFT
-                ArduinoFFT<double> fft(fftReal, fftImag, FFT_SIZE, (double)SAMPLE_RATE_HZ);
+                ArduinoFFT<float> fft(fftReal, fftImag, FFT_SIZE, (double)SAMPLE_RATE_HZ);
                 fft.windowing(FFTWindow::Hamming, FFTDirection::Forward);
                 fft.compute(FFTDirection::Forward);
                 fft.complexToMagnitude();
 
                 // Maximale Amplitude (Bin 0 = DC verwerfen)
-                double maxAmp = 0.001;
+                float maxAmp = 0.001;
                 for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
                     if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
 
                 // Peak-Frequenz bestimmen
-                double   peakAmp = 0.0;
+                float   peakAmp = 0.0;
                 uint16_t peakBin = 1;
                 for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
                     if (fftReal[i] > peakAmp) {
@@ -662,7 +663,7 @@ void btDisplayTask(void* param) {
                                            (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
                     if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
 
-                    double barMax = 0.0;
+                    float barMax = 0.0;
                     for (uint16_t bin = binLow; bin < binHigh; bin++)
                         if (fftReal[bin] > barMax) barMax = fftReal[bin];
 

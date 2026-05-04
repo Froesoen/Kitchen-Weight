@@ -205,7 +205,10 @@ fun WaageScreen(
                     weightColor    = uiState.weightColor,
                     alarmTriggered = uiState.alarmTriggered,
                     alarmMuted     = uiState.alarmMuted,
-                    onMuteAlarm    = { viewModel.muteAlarm(true) },
+                    onMuteAlarm    = { viewModel.muteAlarm() },
+                    weightRearG    = uiState.weightRearG,
+                    weightMidG     = uiState.weightMidG,
+                    weightFrontG   = uiState.weightFrontG,
                     modifier       = Modifier.padding(horizontal = 16.dp)
                 )
 
@@ -329,7 +332,6 @@ fun WaageScreen(
             onSave    = { upper, lower ->
                 viewModel.setAlarmUpper(upper)
                 viewModel.setAlarmLower(lower)
-                viewModel.muteAlarm(false)
             }
         )
     }
