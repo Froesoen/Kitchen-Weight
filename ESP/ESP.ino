@@ -140,7 +140,10 @@ struct ScaleResult {
 
 struct OfflineSample {
     int64_t ts;
-    float   w;
+    float   w;      // Gesamtgewicht
+    float   wR;     // Kanal hinten
+    float   wM;     // Kanal mitte
+    float   wF;     // Kanal vorne
     bool    synced;
 };
 
@@ -572,7 +575,12 @@ void btDisplayTask(void* param) {
 
             // [2] Offline-Ringpuffer: Gesamtgewicht
             offlineBuffer[offlineWriteIdx] = {
-                currentWeightTs, snap.weightTotal, snap.timeSynced
+                    currentWeightTs,
+                    snap.weightTotal,
+                    snap.weightRear,
+                    snap.weightMid,
+                    snap.weightFront,
+                    snap.timeSynced
             };
             offlineWriteIdx = (offlineWriteIdx + 1) % offlineBufferCapacity;
             if (offlineWriteIdx == offlineSendIdx)
@@ -587,78 +595,104 @@ void btDisplayTask(void* param) {
         }
 
         // ── FFT berechnen wenn Frame voll ─────────────────────────────────────
+        // ── FFT berechnen wenn Frame voll ─────────────────────────────────────
         if (fftSampleCount >= FFT_SIZE) {
             fftSampleCount = 0;
 
-            // Hamming-Fensterung + FFT
-            ArduinoFFT<double> fft(fftReal, fftImag, FFT_SIZE, (double)SAMPLE_RATE_HZ);
-            fft.windowing(FFTWindow::Hamming, FFTDirection::Forward);
-            fft.compute(FFTDirection::Forward);
-            fft.complexToMagnitude();
+            // Span-Prüfung: FFT nur auswerten wenn Signal ≥ 5 g Spanne
+            double fftMin = fftReal[0], fftMax = fftReal[0];
+            for (uint16_t i = 1; i < FFT_SIZE; i++) {
+                if (fftReal[i] < fftMin) fftMin = fftReal[i];
+                if (fftReal[i] > fftMax) fftMax = fftReal[i];
+            }
 
-            // Maximale Amplitude (Bin 0 = DC verwerfen)
-            double maxAmp = 0.001;
-            for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
-                if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
+            if ((fftMax - fftMin) < 5.0) {
+                // Kein ausreichendes Signal → Maschine aus
+                fftPeakHz   = 0.0f;
+                fftPeakAmp  = 0.0f;
+                fftPeakHold = 1.0f;
+                fftResultReady = true;
+                memset(fftReal, 0, sizeof(fftReal));
+                memset(fftImag, 0, sizeof(fftImag));
+                memset(fftBarHeights, 0, sizeof(fftBarHeights));
 
-            // Peak-Frequenz bestimmen
-            double   peakAmp = 0.0;
-            uint16_t peakBin = 1;
-            for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
-                if (fftReal[i] > peakAmp) {
-                    peakAmp = fftReal[i];
-                    peakBin = i;
+                if (btConnected) {
+                    btSend("{\"type\":\"fft_result\",\"peakHz\":0.0,"
+                           "\"peakAmp\":0.0,\"machineOff\":true}\n");
                 }
-            }
+                Serial.println("[FFT] Span < 5g → Maschine aus");
 
-            // Peak-Hold (langsames Abklingen)
-            if (peakAmp > (double)fftPeakHold) fftPeakHold = (float)peakAmp;
-            else                                fftPeakHold *= 0.98f;
-            if (fftPeakHold < 1.f)              fftPeakHold = 1.f;
+            } else {
+                // Hamming-Fensterung + FFT
+                ArduinoFFT<double> fft(fftReal, fftImag, FFT_SIZE, (double)SAMPLE_RATE_HZ);
+                fft.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+                fft.compute(FFTDirection::Forward);
+                fft.complexToMagnitude();
 
-            fftPeakHz  = peakBin * FFT_BIN_RES;
-            fftPeakAmp = (float)peakAmp;
+                // Maximale Amplitude (Bin 0 = DC verwerfen)
+                double maxAmp = 0.001;
+                for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
+                    if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
 
-            // Bins auf 32 Display-Balken verteilen
-            float nyquist = SAMPLE_RATE_HZ / 2.0f;
-            for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
-                float    fLow    =  bar      * nyquist / FFT_BARS;
-                float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
-                uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
-                uint16_t binHigh = max(binLow + 1,
-                                       (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
-                if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
-
-                double barMax = 0.0;
-                for (uint16_t bin = binLow; bin < binHigh; bin++)
-                    if (fftReal[bin] > barMax) barMax = fftReal[bin];
-
-                fftBarHeights[bar] = (float)(barMax / fftPeakHold);
-            }
-            fftResultReady = true;
-
-            // FFT-Ergebnis per BT senden
-            if (btConnected) {
-                String msg;
-                msg.reserve(300);
-                msg  = "{\"type\":\"fft_result\"";
-                msg += ",\"peakHz\":";  msg += String(fftPeakHz, 3);
-                msg += ",\"peakAmp\":"; msg += String(fftPeakAmp, 1);
-                msg += ",\"binRes\":";  msg += String(FFT_BIN_RES, 4);
-                msg += ",\"fs\":";      msg += SAMPLE_RATE_HZ;
-                msg += ",\"bins\":[0";
+                // Peak-Frequenz bestimmen
+                double   peakAmp = 0.0;
+                uint16_t peakBin = 1;
                 for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
-                    uint8_t val = (uint8_t)constrain(
-                        (int)(fftReal[i] / maxAmp * 255.0), 0, 255);
-                    msg += ",";
-                    msg += val;
+                    if (fftReal[i] > peakAmp) {
+                        peakAmp = fftReal[i];
+                        peakBin = i;
+                    }
                 }
-                msg += "]}\n";
-                btSend(msg);
-            }
 
-            Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n",
-                          fftPeakHz, fftPeakAmp, fftPeakHold);
+                // Peak-Hold (langsames Abklingen)
+                if (peakAmp > (double)fftPeakHold) fftPeakHold = (float)peakAmp;
+                else                                fftPeakHold *= 0.98f;
+                if (fftPeakHold < 1.f)              fftPeakHold = 1.f;
+
+                fftPeakHz  = peakBin * FFT_BIN_RES;
+                fftPeakAmp = (float)peakAmp;
+
+                // Bins auf 32 Display-Balken verteilen
+                float nyquist = SAMPLE_RATE_HZ / 2.0f;
+                for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
+                    float    fLow    =  bar      * nyquist / FFT_BARS;
+                    float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
+                    uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
+                    uint16_t binHigh = max(binLow + 1,
+                                           (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
+                    if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
+
+                    double barMax = 0.0;
+                    for (uint16_t bin = binLow; bin < binHigh; bin++)
+                        if (fftReal[bin] > barMax) barMax = fftReal[bin];
+
+                    fftBarHeights[bar] = (float)(barMax / fftPeakHold);
+                }
+                fftResultReady = true;
+
+                // FFT-Ergebnis per BT senden
+                if (btConnected) {
+                    String msg;
+                    msg.reserve(300);
+                    msg  = "{\"type\":\"fft_result\"";
+                    msg += ",\"peakHz\":";  msg += String(fftPeakHz, 3);
+                    msg += ",\"peakAmp\":"; msg += String(fftPeakAmp, 1);
+                    msg += ",\"binRes\":";  msg += String(FFT_BIN_RES, 4);
+                    msg += ",\"fs\":";      msg += SAMPLE_RATE_HZ;
+                    msg += ",\"bins\":[0";
+                    for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
+                        uint8_t val = (uint8_t)constrain(
+                                (int)(fftReal[i] / maxAmp * 255.0), 0, 255);
+                        msg += ",";
+                        msg += val;
+                    }
+                    msg += "]}\n";
+                    btSend(msg);
+                }
+
+                Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n",
+                              fftPeakHz, fftPeakAmp, fftPeakHold);
+            }
         }
 
         // ── ScaleResults verarbeiten ──────────────────────────────────────────
@@ -691,15 +725,17 @@ void btDisplayTask(void* param) {
                                   - offlineSendIdx) % offlineBufferCapacity;
 
                 String msg;
-                msg.reserve(count * 22 + 48);
+                msg.reserve(count * 48 + 48);
                 msg = "{\"type\":\"measurement_batch\",\"samples\":[";
                 uint16_t idx = offlineSendIdx;
                 for (uint16_t i = 0; i < count; i++) {
                     if (i > 0) msg += ",";
-                    msg += "{\"w\":";
-                    msg += String(offlineBuffer[idx].w, 4);
-                    msg += ",\"ts\":";
-                    msg += String((long long)offlineBuffer[idx].ts);
+                    const OfflineSample& s = offlineBuffer[idx];
+                    msg += "{\"w\":";   msg += String(s.w,  2);
+                    msg += ",\"wR\":";  msg += String(s.wR, 2);
+                    msg += ",\"wM\":";  msg += String(s.wM, 2);
+                    msg += ",\"wF\":";  msg += String(s.wF, 2);
+                    msg += ",\"ts\":";  msg += String((long long)s.ts);
                     msg += "}";
                     idx = (idx + 1) % offlineBufferCapacity;
                 }
