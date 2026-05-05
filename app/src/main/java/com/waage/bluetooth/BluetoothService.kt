@@ -45,8 +45,8 @@ data class FftResult(
 
 sealed class WaageMessage {
     data class MeasurementBatch(val samples: List<BatchSample>) : WaageMessage()
-    data class TareDone(val offset: Float) : WaageMessage()
-    data class Factor(val value: Float) : WaageMessage()
+    data class TareDone(val channel: String, val offset: Float) : WaageMessage()
+    data class Factor(val channel: String, val value: Float) : WaageMessage()
     data class FftData(val result: FftResult) : WaageMessage()
     object SyncDone : WaageMessage()
     data class BufferStart(val count: Int) : WaageMessage()
@@ -65,7 +65,9 @@ sealed class WaageMessage {
         val offlineBufferSeconds: Int,
         val offlineBufferCapacity: Int,
         val displayHz: Int,
-        val calibrationFactor: Float = -1f
+        val factorRear:  Float = -1f,
+        val factorMid:   Float = -1f,
+        val factorFront: Float = -1f
     ) : WaageMessage()
 }
 
@@ -207,8 +209,14 @@ class BluetoothService(
                     }
                 }
 
-                "tare_done"     -> onMessage(WaageMessage.TareDone(obj.optDouble("offset", 0.0).toFloat()))
-                "factor"        -> onMessage(WaageMessage.Factor(obj.getDouble("value").toFloat()))
+                "tare_done"     -> onMessage(WaageMessage.TareDone(
+                    channel = obj.optString("ch", ""),
+                    offset  = obj.optDouble("offset", 0.0).toFloat()
+                ))
+                "factor"        -> onMessage(WaageMessage.Factor(
+                    channel = obj.optString("ch", ""),
+                    value   = obj.getDouble("value").toFloat()
+                ))
                 "sync_done"     -> onMessage(WaageMessage.SyncDone)
                 "buffer_start"  -> onMessage(WaageMessage.BufferStart(obj.optInt("count", 0)))
                 "buffer_sample" -> onMessage(WaageMessage.BufferSample(
@@ -226,7 +234,9 @@ class BluetoothService(
                     offlineBufferSeconds  = obj.optInt("offlineBufferSeconds", 60),
                     offlineBufferCapacity = obj.optInt("offlineBufferCapacity", 1200),
                     displayHz             = obj.optInt("displayHz", 2),
-                    calibrationFactor     = obj.optDouble("calibrationFactor", -1.0).toFloat()
+                    factorRear            = obj.optDouble("factorRear",  -1.0).toFloat(),
+                    factorMid             = obj.optDouble("factorMid",   -1.0).toFloat(),
+                    factorFront           = obj.optDouble("factorFront", -1.0).toFloat()
                 ))
 
                 "error" -> onMessage(WaageMessage.Error(obj.optString("msg", "Unbekannter Fehler")))

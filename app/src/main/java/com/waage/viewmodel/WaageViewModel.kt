@@ -40,7 +40,9 @@ data class WaageUiState(
     val selectedRange:     TimeRange     = TimeRange.ONE_MIN,
     val graphSamples:      List<WeightSample> = emptyList(),
     val stats:             WeightBuffer.Stats? = null,
-    val calibrationFactor: Float         = 1f,
+    val factorRear:        Float         = 1f,
+    val factorMid:         Float         = 1f,
+    val factorFront:       Float         = 1f,
     val alarmActive:       Boolean       = false,
     val weightColor:       WeightColor   = WeightColor.WHITE,
     val alarmTriggered:    Boolean       = false,
@@ -139,9 +141,16 @@ class WaageViewModel(
         try { service()?.sendTare() } catch (e: SecurityException) { Log.e(TAG, "tare", e) }
     }
 
-    fun sendCalibrate(knownWeightG: Float) {
+        fun sendTareChannel(channel: Char) {
         if (!canUseBluetooth()) return
-        try { service()?.sendCalibrate(knownWeightG) } catch (e: SecurityException) { Log.e(TAG, "calibrate", e) }
+        try { service()?.sendJson("""{"type":"tare_channel","ch":"$channel"}""") }
+        catch (e: SecurityException) { Log.e(TAG, "tare_channel", e) }
+    }
+
+    fun sendCalibrateChannel(channel: Char, knownWeightG: Float) {
+        if (!canUseBluetooth()) return
+        try { service()?.sendJson("""{"type":"calibrate_channel","ch":"$channel","weight":$knownWeightG}""") }
+        catch (e: SecurityException) { Log.e(TAG, "calibrate_channel", e) }
     }
 
     fun requestDeviceConfig() {
@@ -228,7 +237,15 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.Factor -> {
-                    _uiState.value = _uiState.value.copy(calibrationFactor = msg.value)
+                    _uiState.update {
+                        when (msg.channel) {
+                            "R"  -> it.copy(factorRear   = msg.value)
+                            "M"  -> it.copy(factorMid    = msg.value)
+                            "F"  -> it.copy(factorFront  = msg.value)
+                            else -> it
+                        }
+                    }
+                    lastReceivedFactor.value = msg.channel to msg.value
                 }
 
                 is WaageMessage.BufferStart -> {
@@ -261,7 +278,7 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.Config -> {
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { it.copy(
                         deviceSampleRateHz          = msg.sampleRateHz,
                         devicePublishRateHz         = msg.publishRateHz,
                         deviceAvgSamples            = msg.avgSamples,
@@ -269,9 +286,10 @@ class WaageViewModel(
                         deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
                         deviceDisplayHz             = msg.displayHz,
                         deviceConfigLoaded          = true,
-                        calibrationFactor           = if (msg.calibrationFactor > 0f)
-                            msg.calibrationFactor else _uiState.value.calibrationFactor
-                    )
+                        factorRear  = if (msg.factorRear  > 0f) msg.factorRear  else it.factorRear,
+                        factorMid   = if (msg.factorMid   > 0f) msg.factorMid   else it.factorMid,
+                        factorFront = if (msg.factorFront > 0f) msg.factorFront else it.factorFront
+                    )}
                 }
 
                 is WaageMessage.Error -> Log.w(TAG, "ESP32 error: ${msg.message}")

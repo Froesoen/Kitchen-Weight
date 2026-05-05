@@ -21,9 +21,9 @@
 //    displayHz             1–10 Hz   OLED-Refresh
 //
 //  Kalibrierung:
-//    Vorläufig: ein gemeinsamer Faktor für alle drei Kanäle.
-//    Gesamt-Rohwert (Summe aller drei) wird gegen bekanntes Gewicht kalibriert.
-//    Spätere Erweiterung: drei individuelle Faktoren (kfak0/kfak1/kfak2).
+//    Drei individuelle Faktoren (factorRear / factorMid / factorFront).
+//    Jeder Kanal wird separat kalibriert: Tara → Gewicht auflegen → Faktor berechnen.
+//    NVS-Keys: kalfaktorR / kalfaktorM / kalfaktorF
 //
 //  Benötigte Libraries:
 //    HX711 (bogde), U8g2, ArduinoJson, arduinoFFT (kosme1 v2.x)
@@ -61,7 +61,9 @@
 #define BT_DEVICE_NAME  "Waage_ESP32"
 #define NVS_NAMESPACE   "waage"
 #define NVS_KEY_INIT    "cfginit"
-#define NVS_KEY_FACTOR  "kalfaktor"   // gemeinsamer Faktor (Übergangslösung)
+#define NVS_KEY_FACTOR_R "kalfaktorR"
+#define NVS_KEY_FACTOR_M "kalfaktorM"
+#define NVS_KEY_FACTOR_F "kalfaktorF"
 #define NVS_KEY_PRATE   "prate"
 #define NVS_KEY_AVG     "avg"
 #define NVS_KEY_BUFSEC  "bufsec"
@@ -124,17 +126,23 @@ struct SampleSnapshot {
     bool     timeSynced;
 };
 
-enum class ScaleCommandType : uint8_t { None, Tare, Calibrate, ApplyConfig };
+enum class ScaleCommandType : uint8_t {
+    None, Tare, Calibrate, ApplyConfig,
+    TareChannel,        // Tara für einzelnen Kanal
+    CalibrateChannel    // Kalibrierung für einzelnen Kanal
+};
 
 struct ScaleCommand {
     ScaleCommandType type;
     float            knownWeightG;
+    char             channel;       // 'R', 'M', 'F' — für Kanal-Befehle
     DeviceConfig     newConfig;
 };
 
 struct ScaleResult {
     bool  ok;
     char  type[16];
+    char  channel;      // 'R', 'M', 'F', oder '\0' für alle
     float value;
     char  msg[48];
 };
@@ -158,7 +166,9 @@ Preferences     prefs;
 
 // ── Konfiguration & abgeleitete Werte ─────────────────────────────────────────
 DeviceConfig      config;
-float             calibrationFactor   = 1.0f;  // gemeinsam für alle drei Kanäle
+float factorRear  = 1.0f;   // individueller Kalibrierfaktor Kanal hinten
+float factorMid   = 1.0f;   // individueller Kalibrierfaktor Kanal mitte
+float factorFront = 1.0f;   // individueller Kalibrierfaktor Kanal vorne
 volatile uint32_t publishPeriodMs     = 500;
 volatile uint32_t displayPeriodMs     = 500;
 uint8_t           displayMode         = 1;     // 0=groß, 1=Verlauf, 2=FFT
@@ -219,17 +229,22 @@ bool measureTaskStarted = false;
 //    handleCommand
 // ============================================================
 
-// ── NVS: Kalibrierfaktor ──────────────────────────────────────────────────────
-float loadFactor() {
+// ── NVS: Kalibrierfaktoren ────────────────────────────────────────────────────
+void loadFactors() {
     prefs.begin(NVS_NAMESPACE, true);
-    float f = prefs.getFloat(NVS_KEY_FACTOR, 1.0f);
+    // Migration: falls noch kein Einzelfaktor vorhanden, Legacy-Key als Startwert
+    float legacy = prefs.getFloat("kalfaktor", 1.0f);
+    factorRear   = prefs.getFloat(NVS_KEY_FACTOR_R, legacy);
+    factorMid    = prefs.getFloat(NVS_KEY_FACTOR_M, legacy);
+    factorFront  = prefs.getFloat(NVS_KEY_FACTOR_F, legacy);
     prefs.end();
-    return f;
 }
 
-void saveFactor(float f) {
+void saveFactor(char ch, float f) {
     prefs.begin(NVS_NAMESPACE, false);
-    prefs.putFloat(NVS_KEY_FACTOR, f);
+    if      (ch == 'R') prefs.putFloat(NVS_KEY_FACTOR_R, f);
+    else if (ch == 'M') prefs.putFloat(NVS_KEY_FACTOR_M, f);
+    else if (ch == 'F') prefs.putFloat(NVS_KEY_FACTOR_F, f);
     prefs.end();
 }
 
@@ -324,7 +339,7 @@ void sendError(const char* msg) {
 }
 
 void sendConfig(const char* typeName = "config") {
-    StaticJsonDocument<256> d;
+    StaticJsonDocument<320> d;
     d["type"]                  = typeName;
     d["sampleRateHz"]          = SAMPLE_RATE_HZ;
     d["publishRateHz"]         = config.publishRateHz;
@@ -332,7 +347,9 @@ void sendConfig(const char* typeName = "config") {
     d["offlineBufferSeconds"]  = config.offlineBufferSeconds;
     d["offlineBufferCapacity"] = offlineBufferCapacity;
     d["displayHz"]             = config.displayHz;
-    d["calibrationFactor"]     = calibrationFactor;
+    d["factorRear"]            = factorRear;
+    d["factorMid"]             = factorMid;
+    d["factorFront"]           = factorFront;
     btSendJson(d);
 }
 
@@ -357,21 +374,35 @@ void handleCommand(const String& json) {
         xQueueSend(scaleCmdQueue, &cmd, 0);
         return;
     }
-
-    if (strcmp(type, "calibrate") == 0) {
-        float known = doc["weight"] | 0.0f;
-        if (known <= 0.0f) { sendError("Gewicht ungueltig"); return; }
+    
+    if (strcmp(type, "tare_channel") == 0) {
+        const char* ch = doc["ch"] | "R";
         ScaleCommand cmd{};
-        cmd.type         = ScaleCommandType::Calibrate;
-        cmd.knownWeightG = known;
+        cmd.type    = ScaleCommandType::TareChannel;
+        cmd.channel = ch[0];
         xQueueSend(scaleCmdQueue, &cmd, 0);
         return;
     }
 
+    if (strcmp(type, "calibrate_channel") == 0) {
+        const char* ch = doc["ch"] | "R";
+        float known    = doc["weight"] | 0.0f;
+        if (known <= 0.0f) { sendError("Gewicht ungueltig"); return; }
+        ScaleCommand cmd{};
+        cmd.type         = ScaleCommandType::CalibrateChannel;
+        cmd.channel      = ch[0];
+        cmd.knownWeightG = known;
+        xQueueSend(scaleCmdQueue, &cmd, 0);
+        return;
+    }
+    
     if (strcmp(type, "get_factor") == 0 || strcmp(type, "getfactor") == 0) {
-        StaticJsonDocument<64> r;
-        r["type"]  = "factor";
-        r["value"] = calibrationFactor;
+        StaticJsonDocument<128> r;
+        r["type"]        = "factor";
+        r["ch"]          = "ALL";
+        r["factorRear"]  = factorRear;
+        r["factorMid"]   = factorMid;
+        r["factorFront"] = factorFront;
         btSendJson(r);
         return;
     }
@@ -492,7 +523,52 @@ void measureTask(void* param) {
                 r.ok = true;
                 strlcpy(r.type, "config_saved", sizeof(r.type));
                 xQueueSend(scaleResultQueue, &r, 0);
-            }
+            // ── TareChannel: einzelnen Kanal tarieren ─────────────────────────
+            } else if (cmd.type == ScaleCommandType::TareChannel) {
+                if      (cmd.channel == 'R') scaleRear.tare();
+                else if (cmd.channel == 'M') scaleMid.tare();
+                else if (cmd.channel == 'F') scaleFront.tare();
+
+                ScaleResult r{};
+                r.ok      = true;
+                r.channel = cmd.channel;
+                strlcpy(r.type, "tare_done", sizeof(r.type));
+                r.value = (cmd.channel == 'R') ? (float)scaleRear.get_offset()
+                        : (cmd.channel == 'M') ? (float)scaleMid.get_offset()
+                                               : (float)scaleFront.get_offset();
+                xQueueSend(scaleResultQueue, &r, 0);
+
+            // ── CalibrateChannel: einzelnen Kanal kalibrieren ─────────────────
+            } else if (cmd.type == ScaleCommandType::CalibrateChannel) {
+                HX711* scale = (cmd.channel == 'R') ? &scaleRear
+                             : (cmd.channel == 'M') ? &scaleMid
+                                                    : &scaleFront;
+                scale->set_scale(1.0f);
+                float raw = scale->get_value(config.avgSamples * 4);
+
+                ScaleResult r{};
+                r.channel = cmd.channel;
+                if (raw == 0.0f || cmd.knownWeightG <= 0.0f) {
+                    // Fehler: Rohwert 0, alten Faktor wiederherstellen
+                    float oldFactor = (cmd.channel == 'R') ? factorRear
+                                    : (cmd.channel == 'M') ? factorMid
+                                                           : factorFront;
+                    scale->set_scale(oldFactor);
+                    r.ok = false;
+                    strlcpy(r.type, "error",     sizeof(r.type));
+                    strlcpy(r.msg,  "Rohwert 0", sizeof(r.msg));
+                } else {
+                    float newFactor = raw / cmd.knownWeightG;
+                    scale->set_scale(newFactor);
+                    if      (cmd.channel == 'R') factorRear  = newFactor;
+                    else if (cmd.channel == 'M') factorMid   = newFactor;
+                    else                         factorFront = newFactor;
+                    saveFactor(cmd.channel, newFactor);
+                    r.ok    = true;
+                    strlcpy(r.type, "factor", sizeof(r.type));
+                    r.value = newFactor;
+                }
+                xQueueSend(scaleResultQueue, &r, 0);
         }
 
         // ── 20 Hz Messung ─────────────────────────────────────────────────────
@@ -700,13 +776,15 @@ void btDisplayTask(void* param) {
         ScaleResult res;
         while (xQueueReceive(scaleResultQueue, &res, 0) == pdTRUE) {
             if (strcmp(res.type, "tare_done") == 0) {
-                StaticJsonDocument<64> d;
+                StaticJsonDocument<96> d;
                 d["type"]   = "tare_done";
+                d["ch"]     = String(res.channel);   // NEU
                 d["offset"] = res.value;
                 btSendJson(d);
             } else if (strcmp(res.type, "factor") == 0) {
-                StaticJsonDocument<64> d;
+                StaticJsonDocument<96> d;
                 d["type"]  = "factor";
+                d["ch"]    = String(res.channel);    // NEU
                 d["value"] = res.value;
                 btSendJson(d);
             } else if (strcmp(res.type, "config_saved") == 0) {
@@ -895,9 +973,9 @@ void setup() {
     u8g2.sendBuffer();
 
     // Konfiguration und Kalibrierfaktor aus NVS laden
-    loadConfig();
-    calibrationFactor = loadFactor();
-    Serial.printf("[setup] calibrationFactor: %.6f\n", calibrationFactor);
+    loadFactors();
+    Serial.printf("[setup] factorRear=%.4f  factorMid=%.4f  factorFront=%.4f\n",
+                  factorRear, factorMid, factorFront);
 
     // ── HX711 initialisieren ─────────────────────────────────────────────────
     scaleRear.begin (HX711_REAR_DOUT,  HX711_REAR_SCK);
@@ -926,9 +1004,9 @@ void setup() {
     scaleRear.tare();
     scaleMid.tare();
     scaleFront.tare();
-    scaleRear.set_scale(calibrationFactor);
-    scaleMid.set_scale(calibrationFactor);
-    scaleFront.set_scale(calibrationFactor);
+    scaleRear.set_scale(factorRear);
+    scaleMid.set_scale(factorMid);
+    scaleFront.set_scale(factorFront);
 
     Serial.println("[setup] Alle 3 HX711 bereit und tariert.");
 
