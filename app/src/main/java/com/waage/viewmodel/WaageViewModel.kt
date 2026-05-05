@@ -69,6 +69,7 @@ class WaageViewModel(
 
     private val _uiState = MutableStateFlow(WaageUiState())
     val uiState: StateFlow<WaageUiState> = _uiState
+	val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
 
     private val settings    = AppSettings(context)
     private val buffer      = WeightBuffer()
@@ -142,7 +143,7 @@ class WaageViewModel(
         try { service()?.sendTare() } catch (e: SecurityException) { Log.e(TAG, "tare", e) }
     }
 
-        fun sendTareChannel(channel: Char) {
+    fun sendTareChannel(channel: Char) {
         if (!canUseBluetooth()) return
         try { service()?.sendJson("""{"type":"tare_channel","ch":"$channel"}""") }
         catch (e: SecurityException) { Log.e(TAG, "tare_channel", e) }

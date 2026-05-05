@@ -54,6 +54,10 @@ private val KA_SPEEDS = listOf(
 )
 private const val KA_TOLERANCE_HZ = 0.15f
 
+// Farben für die drei Wägezellen-Kanäle (konsistent in Graph + WeightDisplay)
+val ChannelColorRear  = Color(0xFF00E5FF)  // Cyan    – Hinten
+val ChannelColorMid   = Color(0xFFFFD740)  // Amber   – Mitte
+val ChannelColorFront = Color(0xFFFF40FF)  // Magenta – Vorne
 // ── StatusBar ─────────────────────────────────────────────────────────────────
 @Composable
 fun StatusBar(
@@ -132,9 +136,9 @@ fun WeightDisplay(
                 .padding(horizontal = 16.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            ChannelChip("Hinten",  weightRearG)
-            ChannelChip("Mitte",   weightMidG)
-            ChannelChip("Vorne",   weightFrontG)
+            ChannelChip("Hinten",  weightRearG,  ChannelColorRear)
+            ChannelChip("Mitte",   weightMidG,   ChannelColorMid)
+            ChannelChip("Vorne",   weightFrontG, ChannelColorFront)
         }
 
         if (alarmTriggered) {
@@ -162,13 +166,13 @@ fun WeightDisplay(
 }
 
 @Composable
-private fun ChannelChip(label: String, valueG: Float) {
+private fun ChannelChip(label: String, valueG: Float, channelColor: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, fontSize = 9.sp,  color = Color(0xFF888888))
+        Text(text = label, fontSize = 9.sp, color = channelColor.copy(alpha = 0.7f))
         Text(
             text       = formatWeight(valueG),
             fontSize   = 12.sp,
-            color      = Color(0xFFB0BEC5),
+            color      = channelColor,
             fontWeight = FontWeight.Medium
         )
     }
@@ -281,13 +285,13 @@ fun WeightGraph(
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f)))
                 }
 
-                // 4. Kanallinien (R/M/F) – gestrichelt, dezent
-                val channelColors = listOf(
-                    Color(0xFF42A5F5) to { s: WeightSample -> s.weightR },   // Hinten – blau
-                    Color(0xFFAB47BC) to { s: WeightSample -> s.weightM },   // Mitte  – lila
-                    Color(0xFFFF7043) to { s: WeightSample -> s.weightF }    // Vorne  – orange
+                // 4. Kanallinien (R/M/F) – durchgehend, gut sichtbar
+                val channelDefs = listOf(
+                    ChannelColorRear  to { s: WeightSample -> s.weightR },
+                    ChannelColorMid   to { s: WeightSample -> s.weightM },
+                    ChannelColorFront to { s: WeightSample -> s.weightF }
                 )
-                channelColors.forEach { (color, getter) ->
+                channelDefs.forEach { (color, getter) ->
                     val channelWeights = samples.map { getter(it) }
                     if (channelWeights.any { it != 0f }) {
                         val channelPath = Path()
@@ -296,9 +300,8 @@ fun WeightGraph(
                             val y = yOf(getter(s))
                             if (i == 0) channelPath.moveTo(x, y) else channelPath.lineTo(x, y)
                         }
-                        drawPath(channelPath, color.copy(alpha = 0.55f),
-                            style = Stroke(width = 1.2f,
-                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))))
+                        drawPath(channelPath, color.copy(alpha = 0.85f),
+                            style = Stroke(width = 1.8f))
                     }
                 }
 

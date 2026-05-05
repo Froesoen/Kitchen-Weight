@@ -114,7 +114,7 @@ fun WaageScreen(
 						Image(
 							painter = painterResource(id = R.mipmap.ic_launcher_foreground),
 							contentDescription = "Kitchen Weight Logo",
-							modifier = Modifier.size(28.dp),
+							modifier = Modifier.size(48.dp), // Logo Größe
 							contentScale = ContentScale.Fit
 						)
 						Text(
