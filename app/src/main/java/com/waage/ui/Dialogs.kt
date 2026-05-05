@@ -253,15 +253,16 @@ fun DeviceConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("Kalibrierungsfaktor [-]", color = Color.Gray, fontSize = 13.sp)
-                        Text(
-                            text = if (uiState.deviceConfigLoaded) {
-                                "%.4f".format(uiState.calibrationFactor)
-                            } else {
-                                "—"
-                            },
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text("Kalibrierfaktoren [-]", color = Color.Gray, fontSize = 13.sp)
+						Text(
+							text = if (uiState.deviceConfigLoaded) {
+								"R: %.4f  M: %.4f  F: %.4f".format(
+									uiState.factorRear, uiState.factorMid, uiState.factorFront
+								)
+							} else { "—" },
+							fontWeight = FontWeight.Medium,
+							fontSize = 12.sp
+						)
                     }
                     TextButton(onClick = onOpenCalibration) {
                         Text("Kalibrieren", fontSize = 13.sp)

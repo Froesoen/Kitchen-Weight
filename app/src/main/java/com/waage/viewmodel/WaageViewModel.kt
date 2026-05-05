@@ -370,7 +370,7 @@ class WaageViewModel(
             buffer            = buffer,
             range             = _uiState.value.selectedRange,
             measurementName   = name,
-            calibrationFactor = _uiState.value.calibrationFactor
+            calibrationFactor = (_uiState.value.factorRear + _uiState.value.factorMid + _uiState.value.factorFront) / 3f
         )
     }
 
