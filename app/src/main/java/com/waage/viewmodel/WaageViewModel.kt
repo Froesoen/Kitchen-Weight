@@ -266,7 +266,21 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.BufferEnd -> {
-                    buffer.addAll(pendingBufferSamples)
+                    // Timestamps normalisieren: ESP liefert ggf. millis()-Timestamps statt
+                    // Unix-Zeit. Wir skalieren die Samples so, dass der neueste Timestamp
+                    // der aktuellen Systemzeit entspricht.
+                    val normalized = if (pendingBufferSamples.isNotEmpty()) {
+                        val espNewest = pendingBufferSamples.maxOf { it.timestampMs }
+                        val now = System.currentTimeMillis()
+                        if (espNewest < now - 365L * 24 * 3600 * 1000) {
+                            // Timestamps sind offensichtlich keine Unix-Zeit → verschieben
+                            val offset = now - espNewest
+                            pendingBufferSamples.map { it.copy(timestampMs = it.timestampMs + offset) }
+                        } else {
+                            pendingBufferSamples
+                        }
+                    } else emptyList()
+                    buffer.addAll(normalized)
                     pendingBufferSamples.clear()
                     recalculateUi()
                     Log.d(TAG, "buffer_end → ${buffer.size()} Samples total")

@@ -45,7 +45,15 @@ class WeightBuffer {
     fun getSamples(range: TimeRange): List<WeightSample> {
         if (buffer.isEmpty()) return emptyList()
         val cutoff = System.currentTimeMillis() - range.seconds * 1000L
-        return buffer.filter { it.timestampMs >= cutoff }.sortedBy { it.timestampMs }
+        val filtered = buffer.filter { it.timestampMs >= cutoff }
+        // Fallback: Wenn der Zeitfilter alle Samples herausfiltert (z.B. ESP-millis()
+        // statt Unix-Zeit), die jüngsten Samples relativ zum neuesten Timestamp zeigen
+        if (filtered.isEmpty()) {
+            val newestTs = buffer.maxOf { it.timestampMs }
+            val relativeCutoff = newestTs - range.seconds * 1000L
+            return buffer.filter { it.timestampMs >= relativeCutoff }.sortedBy { it.timestampMs }
+        }
+        return filtered.sortedBy { it.timestampMs }
     }
 
     fun getLatest(n: Int): List<WeightSample> = buffer.takeLast(n).sortedBy { it.timestampMs }

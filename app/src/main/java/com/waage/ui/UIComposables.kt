@@ -346,7 +346,7 @@ fun WeightGraph(
                     val x = xOf(s.timestampMs); val y = yOf(s.weightG)
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
-                drawPath(path, Color(0xFF4CAF50), style = Stroke(width = 2.5f))
+                drawPath(path, Color(0xFF00E676), style = Stroke(width = 2.5f))
 
                 // 8. Peak-Punkt (gelb)
                 val peakIdx = weights.indices.maxByOrNull { weights[it] } ?: return@Canvas
