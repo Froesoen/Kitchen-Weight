@@ -23,6 +23,7 @@ import com.waage.util.formatWeight
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 private const val TAG = "WaageViewModel"
 
