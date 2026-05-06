@@ -463,37 +463,6 @@ void handleCommand(const String& json) {
         r["type"] = "sync_done";
         btSendJson(r);
 
-        // 2. Offline-Puffer übertragen (buffer_start → buffer_sample × N → buffer_end)
-        uint16_t snapHead = offlineWriteIdx;
-        uint16_t count = 0;
-        if (offlineBufferCapacity > 0 && snapHead != offlineSendIdx) {
-            count = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
-        }
-
-        // buffer_start
-        String startMsg = "{\"type\":\"buffer_start\",\"count\":" + String(count) + "}\n";
-        BT.print(startMsg);
-
-        // buffer_sample für jeden Eintrag
-        uint16_t idx = offlineSendIdx;
-        for (uint16_t i = 0; i < count; i++) {
-            const OfflineSample& s = offlineBuffer[idx];
-            int64_t ts = (timeOffset != 0) ? (timeOffset + s.ts) : s.ts;
-            String sampleMsg = "{\"type\":\"buffer_sample\",\"weight\":";
-            sampleMsg += String(s.w, 2);
-            sampleMsg += ",\"ts\":";
-            sampleMsg += String((long long)ts);
-            sampleMsg += ",\"synced\":";
-            sampleMsg += s.synced ? "true" : "false";
-            sampleMsg += "}\n";
-            BT.print(sampleMsg);
-            if (offlineBufferCapacity > 0)
-                idx = (idx + 1) % offlineBufferCapacity;
-        }
-
-        // buffer_end
-        BT.print("{\"type\":\"buffer_end\"}\n");
-        offlineSendIdx = snapHead;   // Puffer als gesendet markieren
         return;
     }
 
@@ -1078,8 +1047,6 @@ void setup() {
     BT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t*) {
         if (event == ESP_SPP_SRV_OPEN_EVT) {
             btConnected = true;
-            // App informieren, dass Zeitsync + Buffer-Abruf nötig
-            BT.print("{\"type\":\"need_sync\"}\n");
         } else if (event == ESP_SPP_CLOSE_EVT) {
             btConnected = false;
         }

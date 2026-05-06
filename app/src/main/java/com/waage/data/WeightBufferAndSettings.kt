@@ -28,24 +28,10 @@ class WeightBuffer {
     }
 
     private val buffer          = ArrayDeque<WeightSample>(MAX_SAMPLES)
-    // Duplikat-Key = Timestamp + Gewicht (gerundet auf 0.1g)
-    private val knownSamples = HashSet<Long>(MAX_SAMPLES * 2)
-
-    private fun sampleKey(sample: WeightSample): Long {
-        // Timestamp als Basis, Gewicht in Zehnteln eingebacken
-        val wInt = (sample.weightG * 10f).toLong().coerceIn(-99999, 99999)
-        return sample.timestampMs * 100000L + wInt + 99999L
-    }
 
     fun add(sample: WeightSample) {
-        val key = sampleKey(sample)
-        if (key in knownSamples) return
-        if (buffer.size >= MAX_SAMPLES) {
-            val removed = buffer.removeFirst()
-            knownSamples.remove(sampleKey(removed))
-        }
+        if (buffer.size >= MAX_SAMPLES) buffer.removeFirst()
         buffer.addLast(sample)
-        knownSamples.add(key)
     }
 
     fun addAll(samples: List<WeightSample>) = samples.forEach { add(it) }
@@ -93,7 +79,6 @@ class WeightBuffer {
 
     fun clear() {
         buffer.clear()
-        knownSamples.clear()
     }
 
     fun size() = buffer.size

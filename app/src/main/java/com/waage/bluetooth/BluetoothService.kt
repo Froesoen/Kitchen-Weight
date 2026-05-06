@@ -49,14 +49,6 @@ sealed class WaageMessage {
     data class Factor(val channel: String, val value: Float) : WaageMessage()
     data class FftData(val result: FftResult) : WaageMessage()
     object SyncDone : WaageMessage()
-    data class BufferStart(val count: Int) : WaageMessage()
-    data class BufferSample(
-        val weightG: Float,
-        val timestampMs: Long,
-        val synced: Boolean
-    ) : WaageMessage()
-    object BufferEnd : WaageMessage()
-    object NeedSync : WaageMessage()
     data class Error(val message: String) : WaageMessage()
     data class Config(
         val sampleRateHz: Int,
@@ -232,14 +224,6 @@ class BluetoothService(
                     }
                 }
                 "sync_done"     -> onMessage(WaageMessage.SyncDone)
-                "buffer_start"  -> onMessage(WaageMessage.BufferStart(obj.optInt("count", 0)))
-                "buffer_sample" -> onMessage(WaageMessage.BufferSample(
-                    weightG     = obj.getDouble("weight").toFloat(),
-                    timestampMs = obj.getLong("ts"),
-                    synced      = obj.optBoolean("synced", true)
-                ))
-                "buffer_end"    -> onMessage(WaageMessage.BufferEnd)
-                "need_sync"     -> onMessage(WaageMessage.NeedSync)
 
                 "config", "config_saved" -> onMessage(WaageMessage.Config(
                     sampleRateHz          = obj.optInt("sampleRateHz", 20),
@@ -280,7 +264,6 @@ class BluetoothService(
 
     fun sendSetFactor(ch: Char, factor: Float) =
         sendJson("""{"type":"set_factor","ch":"$ch","factor":$factor}""")  // ← NEU
-    fun sendGetBuffer()      = sendJson("""{"type":"get_buffer"}""")
     fun sendSync()           = sendJson("""{"type":"sync","unix":${System.currentTimeMillis()}}""")
     fun sendResetConfig()    = sendJson("""{"type":"reset_config"}""")
     fun sendDeviceConfig(publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) =

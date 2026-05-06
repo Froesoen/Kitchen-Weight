@@ -69,7 +69,7 @@ class WaageViewModel(
 
     private val _uiState = MutableStateFlow(WaageUiState())
     val uiState: StateFlow<WaageUiState> = _uiState
-	val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
+    val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
 
     private val settings    = AppSettings(context)
     private val buffer      = WeightBuffer()
@@ -77,7 +77,6 @@ class WaageViewModel(
     private val vibrator    = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
     private var btService: BluetoothService? = null
-    private val pendingBufferSamples = mutableListOf<WeightSample>()
 
     init {
         _uiState.value = _uiState.value.copy(
@@ -255,44 +254,8 @@ class WaageViewModel(
                     lastReceivedFactor.value = msg.channel to msg.value
                 }
 
-                is WaageMessage.BufferStart -> {
-                    pendingBufferSamples.clear()
-                    Log.d(TAG, "buffer_start count=${msg.count}")
-                }
-
-                is WaageMessage.BufferSample -> {
-                    pendingBufferSamples.add(
-                        WeightSample(
-                            weightG     = msg.weightG,
-                            timestampMs = msg.timestampMs,
-                            synced      = msg.synced
-                        )
-                    )
-                }
-
-                is WaageMessage.BufferEnd -> {
-                    // Timestamps normalisieren: ESP liefert ggf. millis()-Timestamps statt
-                    // Unix-Zeit. Wir skalieren die Samples so, dass der neueste Timestamp
-                    // der aktuellen Systemzeit entspricht.
-                    val normalized = if (pendingBufferSamples.isNotEmpty()) {
-                        val espNewest = pendingBufferSamples.maxOf { it.timestampMs }
-                        val now = System.currentTimeMillis()
-                        if (espNewest < now - 365L * 24 * 3600 * 1000) {
-                            // Timestamps sind offensichtlich keine Unix-Zeit → verschieben
-                            val offset = now - espNewest
-                            pendingBufferSamples.map { it.copy(timestampMs = it.timestampMs + offset) }
-                        } else {
-                            pendingBufferSamples
-                        }
-                    } else emptyList()
-                    buffer.addAll(normalized)
-                    pendingBufferSamples.clear()
-                    recalculateUi()
-                    Log.d(TAG, "buffer_end → ${buffer.size()} Samples total")
-                }
-
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done empfangen → Buffer folgt vom ESP")
+                    Log.d(TAG, "sync_done empfangen")
                 }
 
                 is WaageMessage.Config -> {
@@ -308,15 +271,6 @@ class WaageViewModel(
                         factorMid   = if (msg.factorMid   > 0f) msg.factorMid   else it.factorMid,
                         factorFront = if (msg.factorFront > 0f) msg.factorFront else it.factorFront
                     )}
-                }
-
-                is WaageMessage.NeedSync -> {
-                    Log.d(TAG, "need_sync empfangen → sende sync")
-                    if (canUseBluetooth()) {
-                        try { service()?.sendSync() } catch (e: SecurityException) {
-                            Log.e(TAG, "sendSync", e)
-                        }
-                    }
                 }
 
                 is WaageMessage.Error -> Log.w(TAG, "ESP32 error: ${msg.message}")
