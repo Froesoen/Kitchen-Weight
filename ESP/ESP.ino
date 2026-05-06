@@ -980,8 +980,9 @@ void setup() {
 
     // Konfiguration und Kalibrierfaktor aus NVS laden
     loadFactors();
+    loadConfig();    // Konfiguration + applyDerivedConfig()
     Serial.printf("[setup] factorRear=%.4f  factorMid=%.4f  factorFront=%.4f\n",
-                  factorRear, factorMid, factorFront);
+                factorRear, factorMid, factorFront);
 
     // ── HX711 initialisieren ─────────────────────────────────────────────────
     scaleRear.begin (HX711_REAR_DOUT,  HX711_REAR_SCK);
