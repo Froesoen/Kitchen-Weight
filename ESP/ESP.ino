@@ -261,9 +261,10 @@ void applyDerivedConfig() {
     displayPeriodMs  = 1000UL / dHz;
 
     uint32_t cap = (uint32_t)SAMPLE_RATE_HZ * (uint32_t)config.offlineBufferSeconds;
-    if (cap < SAMPLE_RATE_HZ)     cap = SAMPLE_RATE_HZ;
+    if (cap < SAMPLE_RATE_HZ)     cap = SAMPLE_RATE_HZ;   // mind. 1 Sekunde
     if (cap > MAX_OFFLINE_BUFFER) cap = MAX_OFFLINE_BUFFER;
     offlineBufferCapacity = (uint16_t)cap;
+    if (offlineBufferCapacity == 0) offlineBufferCapacity = SAMPLE_RATE_HZ; // Notfall-Absicherung
 
     if (offlineWriteIdx >= offlineBufferCapacity ||
         offlineSendIdx  >= offlineBufferCapacity) {
@@ -482,12 +483,10 @@ void measureTask(void* param) {
 
             // ── Kalibrierung: gemeinsamer Faktor aus Summe aller Rohwerte ────
             } else if (cmd.type == ScaleCommandType::Calibrate) {
-                // Skalierung aufheben, um Rohwerte zu lesen
                 scaleRear.set_scale(1.0f);
                 scaleMid.set_scale(1.0f);
                 scaleFront.set_scale(1.0f);
 
-                // Mittelung über mehr Samples für Präzision
                 float rawRear  = scaleRear.get_value(config.avgSamples * 4);
                 float rawMid   = scaleMid.get_value(config.avgSamples * 4);
                 float rawFront = scaleFront.get_value(config.avgSamples * 4);
@@ -495,22 +494,26 @@ void measureTask(void* param) {
 
                 ScaleResult r{};
                 if (rawSum == 0.0f || cmd.knownWeightG <= 0.0f) {
-                    // Ungültig → Faktor wiederherstellen
-                    scaleRear.set_scale(calibrationFactor);
-                    scaleMid.set_scale(calibrationFactor);
-                    scaleFront.set_scale(calibrationFactor);
+                    scaleRear.set_scale(factorRear);
+                    scaleMid.set_scale(factorMid);
+                    scaleFront.set_scale(factorFront);
                     r.ok = false;
                     strlcpy(r.type, "error",     sizeof(r.type));
                     strlcpy(r.msg,  "Rohwert 0", sizeof(r.msg));
                 } else {
-                    calibrationFactor = rawSum / cmd.knownWeightG;
-                    scaleRear.set_scale(calibrationFactor);
-                    scaleMid.set_scale(calibrationFactor);
-                    scaleFront.set_scale(calibrationFactor);
-                    saveFactor(calibrationFactor);
+                    float newFactor = rawSum / cmd.knownWeightG;
+                    factorRear  = newFactor;
+                    factorMid   = newFactor;
+                    factorFront = newFactor;
+                    scaleRear.set_scale(factorRear);
+                    scaleMid.set_scale(factorMid);
+                    scaleFront.set_scale(factorFront);
+                    saveFactor('R', factorRear);
+                    saveFactor('M', factorMid);
+                    saveFactor('F', factorFront);
                     r.ok    = true;
                     strlcpy(r.type, "factor", sizeof(r.type));
-                    r.value = calibrationFactor;
+                    r.value = newFactor;
                 }
                 xQueueSend(scaleResultQueue, &r, 0);
 
@@ -523,6 +526,7 @@ void measureTask(void* param) {
                 r.ok = true;
                 strlcpy(r.type, "config_saved", sizeof(r.type));
                 xQueueSend(scaleResultQueue, &r, 0);
+
             // ── TareChannel: einzelnen Kanal tarieren ─────────────────────────
             } else if (cmd.type == ScaleCommandType::TareChannel) {
                 if      (cmd.channel == 'R') scaleRear.tare();
@@ -549,7 +553,6 @@ void measureTask(void* param) {
                 ScaleResult r{};
                 r.channel = cmd.channel;
                 if (raw == 0.0f || cmd.knownWeightG <= 0.0f) {
-                    // Fehler: Rohwert 0, alten Faktor wiederherstellen
                     float oldFactor = (cmd.channel == 'R') ? factorRear
                                     : (cmd.channel == 'M') ? factorMid
                                                            : factorFront;
@@ -569,7 +572,8 @@ void measureTask(void* param) {
                     r.value = newFactor;
                 }
                 xQueueSend(scaleResultQueue, &r, 0);
-        }
+            }   // ← schließt das if/else if – war vorher fehlend
+        }       // ← schließt das while(xQueueReceive)
 
         // ── 20 Hz Messung ─────────────────────────────────────────────────────
         uint32_t now = millis();
@@ -659,9 +663,11 @@ void btDisplayTask(void* param) {
                     snap.weightFront,
                     snap.timeSynced
             };
-            offlineWriteIdx = (offlineWriteIdx + 1) % offlineBufferCapacity;
-            if (offlineWriteIdx == offlineSendIdx)
-                offlineSendIdx = (offlineSendIdx + 1) % offlineBufferCapacity;
+            if (offlineBufferCapacity > 0) {
+                offlineWriteIdx = (offlineWriteIdx + 1) % offlineBufferCapacity;
+                if (offlineWriteIdx == offlineSendIdx)
+                    offlineSendIdx = (offlineSendIdx + 1) % offlineBufferCapacity;
+            }
 
             // [3] FFT-Eingabe: nur Frontkanal
             if (fftSampleCount < FFT_SIZE) {
@@ -816,7 +822,7 @@ void btDisplayTask(void* param) {
                     msg += ",\"wF\":";  msg += String(s.wF, 2);
                     msg += ",\"ts\":";  msg += String((long long)s.ts);
                     msg += "}";
-                    idx = (idx + 1) % offlineBufferCapacity;
+                    if (offlineBufferCapacity > 0) idx = (idx + 1) % offlineBufferCapacity;
                 }
                 msg += "]}\n";
                 btSend(msg);
