@@ -821,7 +821,7 @@ void btDisplayTask(void* param) {
         }
 
         // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
-        if (btConnected && timeOffset != 0 && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
+        if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
             uint16_t snapHead = offlineWriteIdx;
@@ -1048,7 +1048,9 @@ void setup() {
         if (event == ESP_SPP_SRV_OPEN_EVT) {
             btConnected = true;
         } else if (event == ESP_SPP_CLOSE_EVT) {
-            btConnected = false;
+            btConnected  = false;
+            timeOffset   = 0;          // ← NEU: bei Disconnect zurücksetzen
+            offlineSendIdx = offlineWriteIdx;  // ← NEU: Sendezeiger auf aktuell setzen
         }
     });
     Serial.printf("[setup] BT bereit als \"%s\"\n", BT_DEVICE_NAME);
