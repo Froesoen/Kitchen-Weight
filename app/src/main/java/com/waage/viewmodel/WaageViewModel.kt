@@ -292,10 +292,7 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done → buffer abrufen")
-                    if (canUseBluetooth()) {
-                        try { service()?.sendGetBuffer() } catch (e: SecurityException) { Log.e(TAG, "sendGetBuffer", e) }
-                    }
+                    Log.d(TAG, "sync_done empfangen → Buffer folgt vom ESP")
                 }
 
                 is WaageMessage.Config -> {
@@ -311,6 +308,15 @@ class WaageViewModel(
                         factorMid   = if (msg.factorMid   > 0f) msg.factorMid   else it.factorMid,
                         factorFront = if (msg.factorFront > 0f) msg.factorFront else it.factorFront
                     )}
+                }
+
+                is WaageMessage.NeedSync -> {
+                    Log.d(TAG, "need_sync empfangen → sende sync")
+                    if (canUseBluetooth()) {
+                        try { service()?.sendSync() } catch (e: SecurityException) {
+                            Log.e(TAG, "sendSync", e)
+                        }
+                    }
                 }
 
                 is WaageMessage.Error -> Log.w(TAG, "ESP32 error: ${msg.message}")

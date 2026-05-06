@@ -108,8 +108,9 @@ class BluetoothService(
                 newSocket.connect()
                 socket = newSocket
                 onStateChange(ConnectionState.Connected)
-                sendSync()
-                startReader(newSocket)
+                startReader(newSocket)          // Reader zuerst starten
+                delay(300)                      // kurz warten bis Reader bereit ist
+                sendSync()                      // erst dann sync senden
                 return
             } catch (e: SecurityException) {
                 Log.e(TAG, "permission error", e)
