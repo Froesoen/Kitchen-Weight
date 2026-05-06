@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.PaddingValues
 
 @Composable
 fun CalibrationDialog(
@@ -311,25 +312,23 @@ fun DeviceConfigDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Kalibrierfaktoren [-]", color = Color.Gray, fontSize = 13.sp)
-						Text(
-							text = if (uiState.deviceConfigLoaded) {
-								"R: %.4f  M: %.4f  F: %.4f".format(
-									uiState.factorRear, uiState.factorMid, uiState.factorFront
-								)
-							} else { "—" },
-							fontWeight = FontWeight.Medium,
-							fontSize = 12.sp
-						)
-                    }
-                    TextButton(onClick = onOpenCalibration) {
-                        Text("Kalibrieren", fontSize = 13.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Kalibrierfaktoren [-]", color = Color.Gray, fontSize = 13.sp)
+                    Text(
+                        text = if (uiState.deviceConfigLoaded) {
+                            "R: %.2f  M: %.2f  F: %.2f".format(
+                                uiState.factorRear, uiState.factorMid, uiState.factorFront
+                            )
+                        } else { "—" },
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp
+                    )
+                    TextButton(
+                        onClick = onOpenCalibration,
+                        modifier = Modifier.padding(start = 0.dp),
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                    ) {
+                        Text("Kalibrieren →", fontSize = 13.sp)
                     }
                 }
 
