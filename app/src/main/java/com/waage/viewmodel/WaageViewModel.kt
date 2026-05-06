@@ -159,6 +159,11 @@ class WaageViewModel(
         if (!canUseBluetooth()) return
         try { service()?.sendGetConfig(); service()?.sendGetFactor() } catch (e: SecurityException) { Log.e(TAG, "getconfig", e) }
     }
+    fun setFactorManual(channel: Char, factor: Float) {
+        if (!canUseBluetooth()) return
+        try { service()?.sendSetFactor(channel, factor) }
+        catch (e: SecurityException) { Log.e(TAG, "set_factor", e) }
+    }
 
     fun sendDeviceConfig(publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) {
         if (!canUseBluetooth()) return

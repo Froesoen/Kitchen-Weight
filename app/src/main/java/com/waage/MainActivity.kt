@@ -322,7 +322,8 @@ fun WaageScreen(
                 pendingCalibrateCallback = onSuccess
                 if (bluetoothPermissionsGranted) viewModel.sendCalibrateChannel(ch, weightG)
                 else showBluetoothPermissionDialog = true
-            }
+            },
+            onSetFactorManual   = { ch, f -> viewModel.setFactorManual(ch, f) }
         )
     }
 

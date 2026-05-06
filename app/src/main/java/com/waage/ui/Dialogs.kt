@@ -27,7 +27,8 @@ fun CalibrationDialog(
     onDismiss: () -> Unit,
     onLoad: () -> Unit,
     onTareChannel: (Char) -> Unit,
-    onCalibrateChannel: (Char, Float, (Float) -> Unit) -> Unit
+    onCalibrateChannel: (Char, Float, (Float) -> Unit) -> Unit,
+    onSetFactorManual: (Char, Float) -> Unit        // ← NEU
 ) {
     LaunchedEffect(Unit) { onLoad() }
 
@@ -64,8 +65,14 @@ fun CalibrationDialog(
                     }
                 }
 
-                // Faktoren-Übersicht
+                // Faktoren-Übersicht + manuelle Eingabe
                 HorizontalDivider()
+
+                var showManualInput  by remember { mutableStateOf(false) }
+                var manualRearText   by remember { mutableStateOf("") }
+                var manualMidText    by remember { mutableStateOf("") }
+                var manualFrontText  by remember { mutableStateOf("") }
+
                 listOf(
                     Triple('R', "Hinten", uiState.factorRear),
                     Triple('M', "Mitte",  uiState.factorMid),
@@ -83,6 +90,63 @@ fun CalibrationDialog(
                             if (factor > 0f) "%.4f".format(factor) else "—",
                             color = Color(0xFF4CAF50)
                         )
+                    }
+                }
+
+                // Toggle manuelle Eingabe
+                TextButton(
+                    onClick = { showManualInput = !showManualInput },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (showManualInput) "▲ Manuelle Eingabe schließen"
+                        else                 "▼ Faktoren manuell setzen",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                }
+
+                if (showManualInput) {
+                    listOf(
+                        Triple('R', "Hinten", manualRearText),
+                        Triple('M', "Mitte",  manualMidText),
+                        Triple('F', "Vorne",  manualFrontText)
+                    ).forEach { (ch, label, text) ->
+                        val v = text.replace(',', '.').toFloatOrNull()
+                        val ok = v != null && v > 0f
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value         = text,
+                                onValueChange = { new ->
+                                    val filtered = new.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                                    when (ch) {
+                                        'R' -> manualRearText  = filtered
+                                        'M' -> manualMidText   = filtered
+                                        'F' -> manualFrontText = filtered
+                                    }
+                                },
+                                label         = { Text(label) },
+                                placeholder   = { Text("%.4f".format(
+                                    when (ch) { 'R' -> uiState.factorRear; 'M' -> uiState.factorMid; else -> uiState.factorFront }
+                                )) },
+                                isError       = text.isNotEmpty() && !ok,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine    = true,
+                                modifier      = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick  = { if (ok) onSetFactorManual(ch, v!!) },
+                                enabled  = ok
+                            ) {
+                                Icon(
+                                    Icons.Default.Check, "Übernehmen",
+                                    tint = if (ok) Color(0xFF4CAF50) else Color.Gray
+                                )
+                            }
+                        }
                     }
                 }
 

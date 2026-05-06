@@ -213,10 +213,23 @@ class BluetoothService(
                     channel = obj.optString("ch", ""),
                     offset  = obj.optDouble("offset", 0.0).toFloat()
                 ))
-                "factor"        -> onMessage(WaageMessage.Factor(
-                    channel = obj.optString("ch", ""),
-                    value   = obj.getDouble("value").toFloat()
-                ))
+                "factor"        -> {
+                    val ch = obj.optString("ch", "")
+                    if (ch == "ALL") {
+                        // Antwort auf get_factor: alle drei Kanäle auf einmal
+                        val r = obj.optDouble("factorRear",  -1.0).toFloat()
+                        val m = obj.optDouble("factorMid",   -1.0).toFloat()
+                        val f = obj.optDouble("factorFront", -1.0).toFloat()
+                        if (r > 0f) onMessage(WaageMessage.Factor("R", r))
+                        if (m > 0f) onMessage(WaageMessage.Factor("M", m))
+                        if (f > 0f) onMessage(WaageMessage.Factor("F", f))
+                    } else {
+                        onMessage(WaageMessage.Factor(
+                            channel = ch,
+                            value   = obj.optDouble("value", 0.0).toFloat()
+                        ))
+                    }
+                }
                 "sync_done"     -> onMessage(WaageMessage.SyncDone)
                 "buffer_start"  -> onMessage(WaageMessage.BufferStart(obj.optInt("count", 0)))
                 "buffer_sample" -> onMessage(WaageMessage.BufferSample(
@@ -262,6 +275,10 @@ class BluetoothService(
     fun sendCalibrate(g: Float) = sendJson("""{"type":"calibrate","weight":$g}""")
     fun sendGetConfig()      = sendJson("""{"type":"get_config"}""")
     fun sendGetFactor()      = sendJson("""{"type":"get_factor"}""")
+
+
+    fun sendSetFactor(ch: Char, factor: Float) =
+        sendJson("""{"type":"set_factor","ch":"$ch","factor":$factor}""")  // ← NEU
     fun sendGetBuffer()      = sendJson("""{"type":"get_buffer"}""")
     fun sendSync()           = sendJson("""{"type":"sync","unix":${System.currentTimeMillis()}}""")
     fun sendResetConfig()    = sendJson("""{"type":"reset_config"}""")

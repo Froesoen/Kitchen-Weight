@@ -408,7 +408,24 @@ void handleCommand(const String& json) {
         return;
     }
 
-    if (strcmp(type, "getconfig") == 0) {
+    if (strcmp(type, "set_factor") == 0) {
+        const char* ch = doc["ch"] | "";
+        float f = doc["factor"] | -1.0f;
+        if (strlen(ch) != 1 || f <= 0.0f) { sendError("Ungültiger Faktor"); return; }
+        if      (ch[0] == 'R') { factorRear   = f; scaleRear.set_scale(f); }
+        else if (ch[0] == 'M') { factorMid    = f; scaleMid.set_scale(f);  }
+        else if (ch[0] == 'F') { factorFront  = f; scaleFront.set_scale(f);}
+        else { sendError("Unbekannter Kanal"); return; }
+        saveFactor(ch[0], f);
+        StaticJsonDocument<128> r;
+        r["type"]    = "factor";
+        r["ch"]      = ch;
+        r["value"]   = f;
+        btSendJson(r);
+        return;
+    }
+
+    if (strcmp(type, "getconfig") == 0 || strcmp(type, "get_config") == 0) {
         sendConfig("config");
         return;
     }
