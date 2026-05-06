@@ -227,7 +227,11 @@ fun WeightGraph(
 
                 val nowMs         = System.currentTimeMillis()
                 val rangeMs       = selectedRange.seconds * 1000L
-                val windowStartMs = nowMs - rangeMs
+                // Wenn die neuesten Samples jünger als "jetzt" sind (korrekte Unix-Zeit),
+                // normales Fenster. Sonst: Fenster relativ zum neuesten Sample aufspannen.
+                val newestSampleTs = samples.maxOf { it.timestampMs }
+                val windowEndMs   = maxOf(nowMs, newestSampleTs)
+                val windowStartMs = windowEndMs - rangeMs
 
                 fun yOf(v: Float) = plotBottom - ((v - minVal) / range) * plotH
                 fun xOf(tsMs: Long): Float {

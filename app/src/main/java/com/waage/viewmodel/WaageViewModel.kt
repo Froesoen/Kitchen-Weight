@@ -212,6 +212,7 @@ class WaageViewModel(
         viewModelScope.launch {
             when (msg) {
                 is WaageMessage.MeasurementBatch -> {
+                    val now = System.currentTimeMillis()
                     val newSamples = msg.samples.map { s ->
                         WeightSample(
                             weightG     = s.weightG,
@@ -221,7 +222,19 @@ class WaageViewModel(
                             timestampMs = s.timestampMs
                         )
                     }
+                    // ── DEBUG ──────────────────────────────────────────────────────
+                    val oldest = newSamples.minOf { it.timestampMs }
+                    val newest = newSamples.maxOf { it.timestampMs }
+                    Log.d("WAAGE_BUF", "Batch empfangen: ${newSamples.size} Samples | " +
+                            "oldest=${oldest} (${now - oldest}ms vor jetzt) | " +
+                            "newest=${newest} (${now - newest}ms vor jetzt)")
+                    // ───────────────────────────────────────────────────────────────
                     buffer.addAll(newSamples)
+
+                    val visible = buffer.getSamples(_uiState.value.selectedRange)
+                    Log.d("WAAGE_BUF", "Nach addAll: buffer=${buffer.size()} | " +
+                            "sichtbar im ${_uiState.value.selectedRange.label}-Fenster: ${visible.size}")
+
                     recalculateUi()
                     newSamples.lastOrNull()?.let { checkAlarm(it.weightG) }
                     // Einzelkanäle aus dem letzten Sample in UI-State übernehmen
@@ -281,6 +294,7 @@ class WaageViewModel(
 
     private fun handleStateChange(state: ConnectionState) {
         viewModelScope.launch {
+            Log.d("WAAGE_BUF", "StateChange → $state | buffer.size=${buffer.size()}")
             val disconnected = state is ConnectionState.Disconnected || state is ConnectionState.Error
             _uiState.value = _uiState.value.copy(
                 connectionState    = state,

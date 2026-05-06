@@ -821,7 +821,7 @@ void btDisplayTask(void* param) {
         }
 
         // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
-        if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
+        if (btConnected && timeOffset != 0 && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
             uint16_t snapHead = offlineWriteIdx;
