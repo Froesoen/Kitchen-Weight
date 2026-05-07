@@ -190,6 +190,9 @@ bool     currentWeightSynced = false;
 // ── BT & Zeit ────────────────────────────────────────────────────────────────
 volatile bool    btConnected = false;
 volatile int64_t timeOffset  = 0;
+volatile bool    btConnected    = false;
+volatile bool    btReadyToSend  = false;   // ← NEU: erst nach sync senden
+volatile int64_t timeOffset     = 0;
 
 // ── Offline-Ringpuffer ────────────────────────────────────────────────────────
 OfflineSample offlineBuffer[MAX_OFFLINE_BUFFER];
@@ -322,7 +325,14 @@ bool saveConfig(const DeviceConfig& c) {
 
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
-    if (btConnected) BT.print(s);
+    if (!btConnected) return;
+    size_t written = BT.print(s);
+    if (written == 0) {
+        // TX fehlgeschlagen → Verbindung als getrennt markieren
+        btConnected   = false;
+        btReadyToSend = false;
+        Serial.println("[BT] TX fehlgeschlagen → getrennt");
+    }
 }
 
 void btSendJson(JsonDocument& doc) {
@@ -458,18 +468,18 @@ void handleCommand(const String& json) {
         int64_t unixTs = doc["unix"] | 0LL;
         timeOffset = unixTs - (int64_t)millis();
 
-        // Puffer-Samples die vor dem sync aufgezeichnet wurden
-        // haben ts = millis() statt Unix-Zeit → nachträglich stempeln
+        // Puffer-Samples mit millis()-Timestamps nachträglich auf Unix-Zeit stempeln
         for (uint16_t i = 0; i < offlineBufferCapacity; i++) {
             if (offlineBuffer[i].ts > 0 && offlineBuffer[i].ts < 946684800000LL) {
                 offlineBuffer[i].ts += timeOffset;
             }
         }
 
-        // sync_done bestätigen
+        // sync_done bestätigen und Sendefreigabe erteilen
         StaticJsonDocument<64> r;
         r["type"] = "sync_done";
         btSendJson(r);
+        btReadyToSend = true;   // ← AB JETZT darf gesendet werden
 
         return;
     }
@@ -829,7 +839,7 @@ void btDisplayTask(void* param) {
         }
 
         // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
-        if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
+        if (btConnected && btReadyToSend && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
             uint16_t snapHead = offlineWriteIdx;
@@ -853,8 +863,12 @@ void btDisplayTask(void* param) {
                     if (offlineBufferCapacity > 0) idx = (idx + 1) % offlineBufferCapacity;
                 }
                 msg += "]}\n";
+
                 btSend(msg);
-                offlineSendIdx = snapHead;
+                // offlineSendIdx nur vorrücken wenn btSend erfolgreich war
+                if (btConnected) {
+                    offlineSendIdx = snapHead;
+                }
             }
         }
 
@@ -1054,9 +1068,11 @@ void setup() {
     BT.begin(BT_DEVICE_NAME);
     BT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t*) {
         if (event == ESP_SPP_SRV_OPEN_EVT) {
-            btConnected = true;
+            btConnected   = true;
+            btReadyToSend = false;   // warten auf sync
         } else if (event == ESP_SPP_CLOSE_EVT) {
-            btConnected = false;
+            btConnected   = false;
+            btReadyToSend = false;
         }
     });
     Serial.printf("[setup] BT bereit als \"%s\"\n", BT_DEVICE_NAME);

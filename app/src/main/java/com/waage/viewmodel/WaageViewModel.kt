@@ -269,6 +269,7 @@ class WaageViewModel(
 
                 is WaageMessage.SyncDone -> {
                     Log.d(TAG, "sync_done empfangen")
+                    requestDeviceConfig()   // ← Config erst nach erfolgreichem sync laden
                 }
 
                 is WaageMessage.Config -> {
@@ -301,7 +302,7 @@ class WaageViewModel(
                 deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
                 alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
             )
-            if (state is ConnectionState.Connected) requestDeviceConfig()
+            // requestDeviceConfig() hier entfernt → wird nach sync_done aufgerufen
         }
     }
 
