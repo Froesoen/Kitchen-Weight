@@ -458,7 +458,15 @@ void handleCommand(const String& json) {
         int64_t unixTs = doc["unix"] | 0LL;
         timeOffset = unixTs - (int64_t)millis();
 
-        // 1. sync_done bestätigen
+        // Puffer-Samples die vor dem sync aufgezeichnet wurden
+        // haben ts = millis() statt Unix-Zeit → nachträglich stempeln
+        for (uint16_t i = 0; i < offlineBufferCapacity; i++) {
+            if (offlineBuffer[i].ts > 0 && offlineBuffer[i].ts < 946684800000LL) {
+                offlineBuffer[i].ts += timeOffset;
+            }
+        }
+
+        // sync_done bestätigen
         StaticJsonDocument<64> r;
         r["type"] = "sync_done";
         btSendJson(r);
@@ -732,15 +740,15 @@ void btDisplayTask(void* param) {
                 fft.compute(FFTDirection::Forward);
                 fft.complexToMagnitude();
 
-                // Maximale Amplitude (Bin 0 = DC verwerfen)
+                // Maximale Amplitude (Bin 0 = DC, Bin 1 = 0.156 Hz verwerfen)
                 float maxAmp = 0.001;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
+                for (uint16_t i = 2; i < FFT_SIZE / 2; i++)
                     if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
 
                 // Peak-Frequenz bestimmen
-                float   peakAmp = 0.0;
-                uint16_t peakBin = 1;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
+                float    peakAmp = 0.0;
+                uint16_t peakBin = 2;
+                for (uint16_t i = 2; i < FFT_SIZE / 2; i++) {
                     if (fftReal[i] > peakAmp) {
                         peakAmp = fftReal[i];
                         peakBin = i;
@@ -760,7 +768,7 @@ void btDisplayTask(void* param) {
                 for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
                     float    fLow    =  bar      * nyquist / FFT_BARS;
                     float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
-                    uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
+                    uint16_t binLow  = max(2, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
                     uint16_t binHigh = max(binLow + 1,
                                            (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
                     if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
@@ -1048,9 +1056,7 @@ void setup() {
         if (event == ESP_SPP_SRV_OPEN_EVT) {
             btConnected = true;
         } else if (event == ESP_SPP_CLOSE_EVT) {
-            btConnected  = false;
-            timeOffset   = 0;          // ← NEU: bei Disconnect zurücksetzen
-            offlineSendIdx = offlineWriteIdx;  // ← NEU: Sendezeiger auf aktuell setzen
+            btConnected = false;
         }
     });
     Serial.printf("[setup] BT bereit als \"%s\"\n", BT_DEVICE_NAME);
