@@ -324,13 +324,7 @@ bool saveConfig(const DeviceConfig& c) {
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
     if (!btConnected) return;
-    size_t written = BT.print(s);
-    if (written == 0) {
-        // TX fehlgeschlagen → Verbindung als getrennt markieren
-        btConnected   = false;
-        btReadyToSend = false;
-        Serial.println("[BT] TX fehlgeschlagen → getrennt");
-    }
+    BT.print(s);
 }
 
 void btSendJson(JsonDocument& doc) {
