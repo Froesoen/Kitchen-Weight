@@ -324,7 +324,9 @@ bool saveConfig(const DeviceConfig& c) {
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
     if (!btConnected) return;
-    BT.print(s);
+    size_t written = BT.print(s);
+    Serial.printf("[btSend] len=%d written=%d btConn=%d\n",
+                  s.length(), (int)written, (int)btConnected);
 }
 
 void btSendJson(JsonDocument& doc) {
@@ -466,6 +468,12 @@ void handleCommand(const String& json) {
                 offlineBuffer[i].ts += timeOffset;
             }
         }
+        Serial.printf("[sync] millis=%lu | cap=%d | WriteIdx=%d | SendIdx=%d | pending=%d\n",
+              millis(),
+              (int)offlineBufferCapacity,
+              (int)offlineWriteIdx,
+              (int)offlineSendIdx,
+              (int)((offlineWriteIdx + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity));
 
         // sync_done bestätigen und Sendefreigabe erteilen
         StaticJsonDocument<64> r;
@@ -835,10 +843,10 @@ void btDisplayTask(void* param) {
             lastPublish = now;
 
             uint16_t snapHead = offlineWriteIdx;
+            uint16_t count = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
+            Serial.printf("[publish] snapHead=%d SendIdx=%d count=%d\n",
+                (int)snapHead, (int)offlineSendIdx, (int)count);
             if (snapHead != offlineSendIdx) {
-                uint16_t count = (snapHead + offlineBufferCapacity
-                                  - offlineSendIdx) % offlineBufferCapacity;
-
                 String msg;
                 msg.reserve(count * 48 + 48);
                 msg = "{\"type\":\"measurement_batch\",\"samples\":[";
