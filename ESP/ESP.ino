@@ -468,18 +468,19 @@ void handleCommand(const String& json) {
                 offlineBuffer[i].ts += timeOffset;
             }
         }
-        Serial.printf("[sync] millis=%lu | cap=%d | WriteIdx=%d | SendIdx=%d | pending=%d\n",
-              millis(),
-              (int)offlineBufferCapacity,
-              (int)offlineWriteIdx,
-              (int)offlineSendIdx,
-              (int)((offlineWriteIdx + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity));
+
+        // Puffer auf max. 3 Batches à 59 Samples begrenzen → nach ~2s live
+        const uint16_t MAX_CATCHUP_SAMPLES = 177;  // 3 × 59
+        uint16_t pending = (offlineWriteIdx + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
+        if (pending > MAX_CATCHUP_SAMPLES) {
+            offlineSendIdx = (offlineWriteIdx + offlineBufferCapacity - MAX_CATCHUP_SAMPLES) % offlineBufferCapacity;
+        }
 
         // sync_done bestätigen und Sendefreigabe erteilen
         StaticJsonDocument<64> r;
         r["type"] = "sync_done";
         btSendJson(r);
-        btReadyToSend = true;   // ← AB JETZT darf gesendet werden
+        btReadyToSend = true;
 
         return;
     }
@@ -839,10 +840,10 @@ void btDisplayTask(void* param) {
         }
 
         // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
-        if (btConnected && btReadyToSend && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
+    if (btConnected && btReadyToSend && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
-            const uint16_t MAX_SAMPLES_PER_BATCH = 50;  // ~3100 Bytes, sicher < 4096
+            const uint16_t MAX_SAMPLES_PER_BATCH = 59;  // ~3720 Bytes, sicher < 4096
 
             uint16_t snapHead = offlineWriteIdx;
             if (snapHead != offlineSendIdx) {
@@ -868,7 +869,6 @@ void btDisplayTask(void* param) {
 
                 btSend(msg);
                 if (btConnected) {
-                    // Nur den gesendeten Chunk vorrücken
                     offlineSendIdx = (offlineSendIdx + count) % offlineBufferCapacity;
                 }
             }
