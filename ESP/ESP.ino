@@ -842,13 +842,15 @@ void btDisplayTask(void* param) {
         if (btConnected && btReadyToSend && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
 
+            const uint16_t MAX_SAMPLES_PER_BATCH = 50;  // ~3100 Bytes, sicher < 4096
+
             uint16_t snapHead = offlineWriteIdx;
-            uint16_t count = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
-            Serial.printf("[publish] snapHead=%d SendIdx=%d count=%d\n",
-                (int)snapHead, (int)offlineSendIdx, (int)count);
             if (snapHead != offlineSendIdx) {
+                uint16_t total = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
+                uint16_t count = total < MAX_SAMPLES_PER_BATCH ? total : MAX_SAMPLES_PER_BATCH;
+
                 String msg;
-                msg.reserve(count * 48 + 48);
+                msg.reserve(count * 65 + 48);
                 msg = "{\"type\":\"measurement_batch\",\"samples\":[";
                 uint16_t idx = offlineSendIdx;
                 for (uint16_t i = 0; i < count; i++) {
@@ -865,9 +867,9 @@ void btDisplayTask(void* param) {
                 msg += "]}\n";
 
                 btSend(msg);
-                // offlineSendIdx nur vorrücken wenn btSend erfolgreich war
                 if (btConnected) {
-                    offlineSendIdx = snapHead;
+                    // Nur den gesendeten Chunk vorrücken
+                    offlineSendIdx = (offlineSendIdx + count) % offlineBufferCapacity;
                 }
             }
         }
