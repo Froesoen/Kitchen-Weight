@@ -188,11 +188,9 @@ int64_t  currentWeightTs     = 0;
 bool     currentWeightSynced = false;
 
 // ── BT & Zeit ────────────────────────────────────────────────────────────────
-volatile bool    btConnected = false;
-volatile int64_t timeOffset  = 0;
-volatile bool    btConnected    = false;
-volatile bool    btReadyToSend  = false;   // ← NEU: erst nach sync senden
-volatile int64_t timeOffset     = 0;
+volatile bool    btConnected   = false;
+volatile bool    btReadyToSend = false;
+volatile int64_t timeOffset    = 0;
 
 // ── Offline-Ringpuffer ────────────────────────────────────────────────────────
 OfflineSample offlineBuffer[MAX_OFFLINE_BUFFER];
