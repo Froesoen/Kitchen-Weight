@@ -1,24 +1,33 @@
 Untersuchungen
 - Kalibrierprozess präzise aufnehmen
 - HX711 auf 80Hz umbauen und testen
-- Genügen Gewichte für Frequenzbestimmung oder muss der Beshcleunigungsaufnehmer ran?
+- Genügen Gewichte für Frequenzbestimmung oder muss der Beschleunigungsaufnehmer ran?
 
-Bugfixes
-- Zeit-Ticks stimmen nicht, wenn Daten nicht für den ganzen Bereich vorliegen --> Plot mit NaNs auffüllen
-- Beim Start sollten gepufferte Daten (volle Puffer-Größe übertragen werden) Wie groß ist der aktuell?
-- FFT-Spektrum nur bei Mindestamplitude von 2g
-- Icon in Titelzeile größer + Versionsangabe
+Bugfixes 
+-
+
+Kleinigkeiten
+- Display ESP optimieren (2 Modi)
+	- Gewicht mit Verlauf 
+	- Gewicht mit Delta und Maschinenstufe
+		- Wie lange? 
+		- Welche Toleranz?
+
+- Versionsangabe
+- Info-Menüpunkt
 	
 Erweiterungen
 - Messen mit noch höherer Frequenz und Mitteln. Nochmal sauber sortieren
 - Saubere Versionierung für App und ESP einführen
 - Zielbereich überlegen als Alternative zu Alarmen
+
 - Tongeber an ESP
 	- Schwellwert aus App vorgegeben
 	- Piep, wenn erreicht
 
-3 Wägezelen
-- Bauen und Grundlagentest
+Basteln
+- Provisorische Befestigungen für Aufnehmer
+- Kalibriervorrichtung für höhere Gewichte
 
 
 
