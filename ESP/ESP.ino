@@ -188,8 +188,9 @@ int64_t  currentWeightTs     = 0;
 bool     currentWeightSynced = false;
 
 // ── BT & Zeit ────────────────────────────────────────────────────────────────
-volatile bool    btConnected = false;
-volatile int64_t timeOffset  = 0;
+volatile bool    btConnected   = false;
+volatile bool    btReadyToSend = false;
+volatile int64_t timeOffset    = 0;
 
 // ── Offline-Ringpuffer ────────────────────────────────────────────────────────
 OfflineSample offlineBuffer[MAX_OFFLINE_BUFFER];
@@ -322,7 +323,10 @@ bool saveConfig(const DeviceConfig& c) {
 
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
-    if (btConnected) BT.print(s);
+    if (!btConnected) return;
+    size_t written = BT.print(s);
+    Serial.printf("[btSend] len=%d written=%d btConn=%d\n",
+                  s.length(), (int)written, (int)btConnected);
 }
 
 void btSendJson(JsonDocument& doc) {
@@ -458,42 +462,26 @@ void handleCommand(const String& json) {
         int64_t unixTs = doc["unix"] | 0LL;
         timeOffset = unixTs - (int64_t)millis();
 
-        // 1. sync_done bestätigen
+        // Puffer-Samples mit millis()-Timestamps nachträglich auf Unix-Zeit stempeln
+        for (uint16_t i = 0; i < offlineBufferCapacity; i++) {
+            if (offlineBuffer[i].ts > 0 && offlineBuffer[i].ts < 946684800000LL) {
+                offlineBuffer[i].ts += timeOffset;
+            }
+        }
+
+        // Puffer auf max. 3 Batches à 59 Samples begrenzen → nach ~2s live
+        const uint16_t MAX_CATCHUP_SAMPLES = 177;  // 3 × 59
+        uint16_t pending = (offlineWriteIdx + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
+        if (pending > MAX_CATCHUP_SAMPLES) {
+            offlineSendIdx = (offlineWriteIdx + offlineBufferCapacity - MAX_CATCHUP_SAMPLES) % offlineBufferCapacity;
+        }
+
+        // sync_done bestätigen und Sendefreigabe erteilen
         StaticJsonDocument<64> r;
         r["type"] = "sync_done";
         btSendJson(r);
+        btReadyToSend = true;
 
-        // 2. Offline-Puffer übertragen (buffer_start → buffer_sample × N → buffer_end)
-        uint16_t snapHead = offlineWriteIdx;
-        uint16_t count = 0;
-        if (offlineBufferCapacity > 0 && snapHead != offlineSendIdx) {
-            count = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
-        }
-
-        // buffer_start
-        String startMsg = "{\"type\":\"buffer_start\",\"count\":" + String(count) + "}\n";
-        BT.print(startMsg);
-
-        // buffer_sample für jeden Eintrag
-        uint16_t idx = offlineSendIdx;
-        for (uint16_t i = 0; i < count; i++) {
-            const OfflineSample& s = offlineBuffer[idx];
-            int64_t ts = (timeOffset != 0) ? (timeOffset + s.ts) : s.ts;
-            String sampleMsg = "{\"type\":\"buffer_sample\",\"weight\":";
-            sampleMsg += String(s.w, 2);
-            sampleMsg += ",\"ts\":";
-            sampleMsg += String((long long)ts);
-            sampleMsg += ",\"synced\":";
-            sampleMsg += s.synced ? "true" : "false";
-            sampleMsg += "}\n";
-            BT.print(sampleMsg);
-            if (offlineBufferCapacity > 0)
-                idx = (idx + 1) % offlineBufferCapacity;
-        }
-
-        // buffer_end
-        BT.print("{\"type\":\"buffer_end\"}\n");
-        offlineSendIdx = snapHead;   // Puffer als gesendet markieren
         return;
     }
 
@@ -763,15 +751,15 @@ void btDisplayTask(void* param) {
                 fft.compute(FFTDirection::Forward);
                 fft.complexToMagnitude();
 
-                // Maximale Amplitude (Bin 0 = DC verwerfen)
+                // Maximale Amplitude (Bin 0 = DC, Bin 1 = 0.156 Hz verwerfen)
                 float maxAmp = 0.001;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++)
+                for (uint16_t i = 2; i < FFT_SIZE / 2; i++)
                     if (fftReal[i] > maxAmp) maxAmp = fftReal[i];
 
                 // Peak-Frequenz bestimmen
-                float   peakAmp = 0.0;
-                uint16_t peakBin = 1;
-                for (uint16_t i = 1; i < FFT_SIZE / 2; i++) {
+                float    peakAmp = 0.0;
+                uint16_t peakBin = 2;
+                for (uint16_t i = 2; i < FFT_SIZE / 2; i++) {
                     if (fftReal[i] > peakAmp) {
                         peakAmp = fftReal[i];
                         peakBin = i;
@@ -791,7 +779,7 @@ void btDisplayTask(void* param) {
                 for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
                     float    fLow    =  bar      * nyquist / FFT_BARS;
                     float    fHigh   = (bar + 1) * nyquist / FFT_BARS;
-                    uint16_t binLow  = max(1, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
+                    uint16_t binLow  = max(2, (int)(fLow  * FFT_SIZE / SAMPLE_RATE_HZ));
                     uint16_t binHigh = max(binLow + 1,
                                            (int)(fHigh * FFT_SIZE / SAMPLE_RATE_HZ));
                     if (binHigh > FFT_SIZE / 2) binHigh = FFT_SIZE / 2;
@@ -852,16 +840,18 @@ void btDisplayTask(void* param) {
         }
 
         // ── BT: Messwert-Batch senden (Gesamtgewicht) ─────────────────────────
-        if (btConnected && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
+    if (btConnected && btReadyToSend && (uint32_t)(now - lastPublish) >= publishPeriodMs) {
             lastPublish = now;
+
+            const uint16_t MAX_SAMPLES_PER_BATCH = 59;  // ~3720 Bytes, sicher < 4096
 
             uint16_t snapHead = offlineWriteIdx;
             if (snapHead != offlineSendIdx) {
-                uint16_t count = (snapHead + offlineBufferCapacity
-                                  - offlineSendIdx) % offlineBufferCapacity;
+                uint16_t total = (snapHead + offlineBufferCapacity - offlineSendIdx) % offlineBufferCapacity;
+                uint16_t count = total < MAX_SAMPLES_PER_BATCH ? total : MAX_SAMPLES_PER_BATCH;
 
                 String msg;
-                msg.reserve(count * 48 + 48);
+                msg.reserve(count * 65 + 48);
                 msg = "{\"type\":\"measurement_batch\",\"samples\":[";
                 uint16_t idx = offlineSendIdx;
                 for (uint16_t i = 0; i < count; i++) {
@@ -876,8 +866,11 @@ void btDisplayTask(void* param) {
                     if (offlineBufferCapacity > 0) idx = (idx + 1) % offlineBufferCapacity;
                 }
                 msg += "]}\n";
+
                 btSend(msg);
-                offlineSendIdx = snapHead;
+                if (btConnected) {
+                    offlineSendIdx = (offlineSendIdx + count) % offlineBufferCapacity;
+                }
             }
         }
 
@@ -1077,11 +1070,11 @@ void setup() {
     BT.begin(BT_DEVICE_NAME);
     BT.register_callback([](esp_spp_cb_event_t event, esp_spp_cb_param_t*) {
         if (event == ESP_SPP_SRV_OPEN_EVT) {
-            btConnected = true;
-            // App informieren, dass Zeitsync + Buffer-Abruf nötig
-            BT.print("{\"type\":\"need_sync\"}\n");
+            btConnected   = true;
+            btReadyToSend = false;   // warten auf sync
         } else if (event == ESP_SPP_CLOSE_EVT) {
-            btConnected = false;
+            btConnected   = false;
+            btReadyToSend = false;
         }
     });
     Serial.printf("[setup] BT bereit als \"%s\"\n", BT_DEVICE_NAME);

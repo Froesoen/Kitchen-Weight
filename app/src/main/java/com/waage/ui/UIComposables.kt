@@ -218,12 +218,13 @@ fun WeightGraph(
                 val plotLeft    = leftPad
                 val plotBottom  = h - bottomPad
 
-                val weights     = samples.map { it.weightG }
-                var minVal      = weights.minOrNull() ?: 0f
-                var maxVal      = weights.maxOrNull() ?: 0f
-                val margin      = maxOf((maxVal - minVal) * 0.1f, 1f)
+                val weights    = samples.map { it.weightG }   // nur Gesamtgewicht – für Peak, Label, letzter Wert
+                val allWeights = samples.flatMap { listOf(it.weightG, it.weightR, it.weightM, it.weightF) }
+                var minVal     = allWeights.minOrNull() ?: 0f
+                var maxVal     = allWeights.maxOrNull() ?: 0f
+                val margin     = maxOf((maxVal - minVal) * 0.1f, 1f)
                 minVal -= margin; maxVal += margin
-                val range       = (maxVal - minVal).takeIf { it != 0f } ?: 1f
+                val range      = (maxVal - minVal).takeIf { it != 0f } ?: 1f
 
                 val nowMs         = System.currentTimeMillis()
                 val rangeMs       = selectedRange.seconds * 1000L

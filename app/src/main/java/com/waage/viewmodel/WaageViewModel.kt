@@ -69,7 +69,7 @@ class WaageViewModel(
 
     private val _uiState = MutableStateFlow(WaageUiState())
     val uiState: StateFlow<WaageUiState> = _uiState
-	val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
+    val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
 
     private val settings    = AppSettings(context)
     private val buffer      = WeightBuffer()
@@ -77,7 +77,6 @@ class WaageViewModel(
     private val vibrator    = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
     private var btService: BluetoothService? = null
-    private val pendingBufferSamples = mutableListOf<WeightSample>()
 
     init {
         _uiState.value = _uiState.value.copy(
@@ -213,6 +212,7 @@ class WaageViewModel(
         viewModelScope.launch {
             when (msg) {
                 is WaageMessage.MeasurementBatch -> {
+                    val now = System.currentTimeMillis()
                     val newSamples = msg.samples.map { s ->
                         WeightSample(
                             weightG     = s.weightG,
@@ -222,7 +222,19 @@ class WaageViewModel(
                             timestampMs = s.timestampMs
                         )
                     }
+                    // ── DEBUG ──────────────────────────────────────────────────────
+                    val oldest = newSamples.minOf { it.timestampMs }
+                    val newest = newSamples.maxOf { it.timestampMs }
+                    Log.d("WAAGE_BUF", "Batch empfangen: ${newSamples.size} Samples | " +
+                            "oldest=${oldest} (${now - oldest}ms vor jetzt) | " +
+                            "newest=${newest} (${now - newest}ms vor jetzt)")
+                    // ───────────────────────────────────────────────────────────────
                     buffer.addAll(newSamples)
+
+                    val visible = buffer.getSamples(_uiState.value.selectedRange)
+                    Log.d("WAAGE_BUF", "Nach addAll: buffer=${buffer.size()} | " +
+                            "sichtbar im ${_uiState.value.selectedRange.label}-Fenster: ${visible.size}")
+
                     recalculateUi()
                     newSamples.lastOrNull()?.let { checkAlarm(it.weightG) }
                     // Einzelkanäle aus dem letzten Sample in UI-State übernehmen
@@ -255,44 +267,9 @@ class WaageViewModel(
                     lastReceivedFactor.value = msg.channel to msg.value
                 }
 
-                is WaageMessage.BufferStart -> {
-                    pendingBufferSamples.clear()
-                    Log.d(TAG, "buffer_start count=${msg.count}")
-                }
-
-                is WaageMessage.BufferSample -> {
-                    pendingBufferSamples.add(
-                        WeightSample(
-                            weightG     = msg.weightG,
-                            timestampMs = msg.timestampMs,
-                            synced      = msg.synced
-                        )
-                    )
-                }
-
-                is WaageMessage.BufferEnd -> {
-                    // Timestamps normalisieren: ESP liefert ggf. millis()-Timestamps statt
-                    // Unix-Zeit. Wir skalieren die Samples so, dass der neueste Timestamp
-                    // der aktuellen Systemzeit entspricht.
-                    val normalized = if (pendingBufferSamples.isNotEmpty()) {
-                        val espNewest = pendingBufferSamples.maxOf { it.timestampMs }
-                        val now = System.currentTimeMillis()
-                        if (espNewest < now - 365L * 24 * 3600 * 1000) {
-                            // Timestamps sind offensichtlich keine Unix-Zeit → verschieben
-                            val offset = now - espNewest
-                            pendingBufferSamples.map { it.copy(timestampMs = it.timestampMs + offset) }
-                        } else {
-                            pendingBufferSamples
-                        }
-                    } else emptyList()
-                    buffer.addAll(normalized)
-                    pendingBufferSamples.clear()
-                    recalculateUi()
-                    Log.d(TAG, "buffer_end → ${buffer.size()} Samples total")
-                }
-
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done empfangen → Buffer folgt vom ESP")
+                    Log.d(TAG, "sync_done empfangen")
+                    requestDeviceConfig()   // ← Config erst nach erfolgreichem sync laden
                 }
 
                 is WaageMessage.Config -> {
@@ -310,15 +287,6 @@ class WaageViewModel(
                     )}
                 }
 
-                is WaageMessage.NeedSync -> {
-                    Log.d(TAG, "need_sync empfangen → sende sync")
-                    if (canUseBluetooth()) {
-                        try { service()?.sendSync() } catch (e: SecurityException) {
-                            Log.e(TAG, "sendSync", e)
-                        }
-                    }
-                }
-
                 is WaageMessage.Error -> Log.w(TAG, "ESP32 error: ${msg.message}")
                 else -> {}
             }
@@ -327,13 +295,14 @@ class WaageViewModel(
 
     private fun handleStateChange(state: ConnectionState) {
         viewModelScope.launch {
+            Log.d("WAAGE_BUF", "StateChange → $state | buffer.size=${buffer.size()}")
             val disconnected = state is ConnectionState.Disconnected || state is ConnectionState.Error
             _uiState.value = _uiState.value.copy(
                 connectionState    = state,
                 deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
                 alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
             )
-            if (state is ConnectionState.Connected) requestDeviceConfig()
+            // requestDeviceConfig() hier entfernt → wird nach sync_done aufgerufen
         }
     }
 
