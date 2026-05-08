@@ -32,6 +32,12 @@ import com.waage.bluetooth.hasBluetoothConnectPermission
 import com.waage.bluetooth.requiredBluetoothPermissions
 import com.waage.ui.*
 import com.waage.viewmodel.WaageViewModel
+import androidx.compose.foundation.Image
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import com.waage.R
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: WaageViewModel
@@ -89,15 +95,35 @@ fun WaageScreen(
 
     // Kalibrier-Callback-Handling
     var pendingCalibrateCallback by remember { mutableStateOf<((Float) -> Unit)?>(null) }
-    LaunchedEffect(uiState.calibrationFactor) {
-        pendingCalibrateCallback?.invoke(uiState.calibrationFactor)
-        pendingCalibrateCallback = null
+    val lastFactor by viewModel.lastReceivedFactor.collectAsStateWithLifecycle()
+    LaunchedEffect(lastFactor) {
+        lastFactor?.let { (_, value) ->
+            pendingCalibrateCallback?.invoke(value)
+            pendingCalibrateCallback = null
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title  = { Text("Waage", color = Color.White) },
+                title = {
+					Row(
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(10.dp)
+					) {
+						Image(
+							painter = painterResource(id = R.mipmap.ic_launcher_foreground),
+							contentDescription = "Kitchen Weight Logo",
+							modifier = Modifier.size(48.dp), // Logo Größe
+							contentScale = ContentScale.Fit
+						)
+						Text(
+							text = "Kitchen Weight",
+							color = Color.White,
+							fontWeight = FontWeight.SemiBold
+						)
+					}
+				},
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF121212)),
                 actions = {
                     IconButton(onClick = { viewModel.clearData() }) {
@@ -182,7 +208,10 @@ fun WaageScreen(
                     weightColor    = uiState.weightColor,
                     alarmTriggered = uiState.alarmTriggered,
                     alarmMuted     = uiState.alarmMuted,
-                    onMuteAlarm    = { viewModel.muteAlarm(true) },
+                    onMuteAlarm    = { viewModel.muteAlarm() },
+                    weightRearG    = uiState.weightRearG,
+                    weightMidG     = uiState.weightMidG,
+                    weightFrontG   = uiState.weightFrontG,
                     modifier       = Modifier.padding(horizontal = 16.dp)
                 )
 
@@ -282,19 +311,19 @@ fun WaageScreen(
 
     if (showCalibration) {
         CalibrationDialog(
-            calibrationFactor = uiState.calibrationFactor,
-            deviceConfigLoaded = uiState.deviceConfigLoaded,
-            onDismiss         = { showCalibration = false },
-            onLoad            = { viewModel.requestDeviceConfig() },
-            onTare            = {
-                if (bluetoothPermissionsGranted) viewModel.sendTare()
+            uiState   = uiState,
+            onDismiss = { showCalibration = false },
+            onLoad    = { viewModel.requestDeviceConfig() },
+            onTareChannel = { ch ->
+                if (bluetoothPermissionsGranted) viewModel.sendTareChannel(ch)
                 else showBluetoothPermissionDialog = true
             },
-            onCalibrate = { weightG: Float, onSuccess: (Float) -> Unit ->
+            onCalibrateChannel = { ch, weightG, onSuccess ->
                 pendingCalibrateCallback = onSuccess
-                if (bluetoothPermissionsGranted) viewModel.sendCalibrate(weightG)
+                if (bluetoothPermissionsGranted) viewModel.sendCalibrateChannel(ch, weightG)
                 else showBluetoothPermissionDialog = true
-            }
+            },
+            onSetFactorManual   = { ch, f -> viewModel.setFactorManual(ch, f) }
         )
     }
 
@@ -306,7 +335,6 @@ fun WaageScreen(
             onSave    = { upper, lower ->
                 viewModel.setAlarmUpper(upper)
                 viewModel.setAlarmLower(lower)
-                viewModel.muteAlarm(false)
             }
         )
     }
