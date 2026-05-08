@@ -20,61 +20,161 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.PaddingValues
 
 @Composable
 fun CalibrationDialog(
-    calibrationFactor: Float,
-    deviceConfigLoaded: Boolean,
+    uiState: com.waage.viewmodel.WaageUiState,
     onDismiss: () -> Unit,
     onLoad: () -> Unit,
-    onTare: () -> Unit,
-    onCalibrate: (weightG: Float, onSuccess: (Float) -> Unit) -> Unit
+    onTareChannel: (Char) -> Unit,
+    onCalibrateChannel: (Char, Float, (Float) -> Unit) -> Unit,
+    onSetFactorManual: (Char, Float) -> Unit        // ← NEU
 ) {
     LaunchedEffect(Unit) { onLoad() }
 
-    var weightText by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var savedFactor by remember { mutableStateOf<Float?>(null) }
+    var selectedChannel by remember { mutableStateOf('R') }
+    var weightText      by remember { mutableStateOf("") }
+    var phase           by remember { mutableStateOf(0) }  // 0=Tara, 1=Gewicht
+    var busy            by remember { mutableStateOf(false) }
+    var resultMsg       by remember { mutableStateOf("") }
 
+    val channelLabels = mapOf('R' to "Hinten", 'M' to "Mitte", 'F' to "Vorne")
     val weightVal = weightText.replace(',', '.').toFloatOrNull()
-    val weightOk = weightVal != null && weightVal > 0f
+    val weightOk  = weightVal != null && weightVal > 0f
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Kalibrierung", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("1. Waage entlasten und tarieren.")
-                Text("2. Bekanntes Gewicht auflegen.")
-                Text("3. Gewicht eingeben und kalibrieren.")
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // Kanal-Auswahl
+                Text("Kanal wählen:", color = Color.Gray, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf('R', 'M', 'F').forEach { ch ->
+                        FilterChip(
+                            selected = selectedChannel == ch,
+                            onClick  = {
+                                selectedChannel = ch
+                                phase = 0
+                                weightText = ""
+                                resultMsg = ""
+                            },
+                            label = { Text(channelLabels[ch]!!) }
+                        )
+                    }
+                }
+
+                // Faktoren-Übersicht + manuelle Eingabe
+                HorizontalDivider()
+
+                var showManualInput  by remember { mutableStateOf(false) }
+                var manualRearText   by remember { mutableStateOf("") }
+                var manualMidText    by remember { mutableStateOf("") }
+                var manualFrontText  by remember { mutableStateOf("") }
+
+                listOf(
+                    Triple('R', "Hinten", uiState.factorRear),
+                    Triple('M', "Mitte",  uiState.factorMid),
+                    Triple('F', "Vorne",  uiState.factorFront)
+                ).forEach { (ch, label, factor) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            label,
+                            fontWeight = if (ch == selectedChannel) FontWeight.Bold else FontWeight.Normal
+                        )
+                        Text(
+                            if (factor > 0f) "%.4f".format(factor) else "—",
+                            color = Color(0xFF4CAF50)
+                        )
+                    }
+                }
+
+                // Toggle manuelle Eingabe
+                TextButton(
+                    onClick = { showManualInput = !showManualInput },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Aktueller Faktor", color = Color.Gray, fontSize = 13.sp)
                     Text(
-                        text = when {
-                            savedFactor != null -> "%.4f".format(savedFactor)
-                            deviceConfigLoaded  -> "%.4f".format(calibrationFactor)
-                            else                -> "—"
-                        },
-                        fontWeight = FontWeight.Medium
+                        if (showManualInput) "▲ Manuelle Eingabe schließen"
+                        else                 "▼ Faktoren manuell setzen",
+                        fontSize = 13.sp, color = Color.Gray
                     )
                 }
 
-                OutlinedTextField(
-                    value = weightText,
-                    onValueChange = { weightText = it },
-                    label = { Text("Bekanntes Gewicht [g]") },
-                    supportingText = { Text("z. B. 500") },
-                    isError = weightText.isNotEmpty() && !weightOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy
+                if (showManualInput) {
+                    listOf(
+                        Triple('R', "Hinten", manualRearText),
+                        Triple('M', "Mitte",  manualMidText),
+                        Triple('F', "Vorne",  manualFrontText)
+                    ).forEach { (ch, label, text) ->
+                        val v = text.replace(',', '.').toFloatOrNull()
+                        val ok = v != null && v > 0f
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value         = text,
+                                onValueChange = { new ->
+                                    val filtered = new.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                                    when (ch) {
+                                        'R' -> manualRearText  = filtered
+                                        'M' -> manualMidText   = filtered
+                                        'F' -> manualFrontText = filtered
+                                    }
+                                },
+                                label         = { Text(label) },
+                                placeholder   = { Text("%.4f".format(
+                                    when (ch) { 'R' -> uiState.factorRear; 'M' -> uiState.factorMid; else -> uiState.factorFront }
+                                )) },
+                                isError       = text.isNotEmpty() && !ok,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine    = true,
+                                modifier      = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick  = { if (ok) onSetFactorManual(ch, v!!) },
+                                enabled  = ok
+                            ) {
+                                Icon(
+                                    Icons.Default.Check, "Übernehmen",
+                                    tint = if (ok) Color(0xFF4CAF50) else Color.Gray
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
+                // Ablaufschritte
+                Text(
+                    "Kanal: ${channelLabels[selectedChannel]}",
+                    fontWeight = FontWeight.SemiBold
                 )
+                when (phase) {
+                    0 -> Text("Schritt 1: Waage entlasten, dann TARA drücken.")
+                    1 -> {
+                        Text("Schritt 2: Bekanntes Gewicht auf den Bereich '${channelLabels[selectedChannel]}' legen.")
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value         = weightText,
+                            onValueChange = { weightText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                            label         = { Text("Bekanntes Gewicht [g]") },
+                            isError       = weightText.isNotEmpty() && !weightOk,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine    = true,
+                            modifier      = Modifier.fillMaxWidth(),
+                            enabled       = !busy
+                        )
+                    }
+                }
 
                 if (busy) {
                     Row(
@@ -85,6 +185,14 @@ fun CalibrationDialog(
                         Text("Kalibriere…", color = Color.Gray, fontSize = 13.sp)
                     }
                 }
+
+                if (resultMsg.isNotEmpty()) {
+                    Text(resultMsg, color = Color(0xFF4CAF50), fontSize = 13.sp)
+                }
+
+                if (!uiState.deviceConfigLoaded) {
+                    TextButton(onClick = onLoad) { Text("Aktuelle Faktoren laden") }
+                }
             }
         },
         confirmButton = {
@@ -93,44 +201,39 @@ fun CalibrationDialog(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Abbrechen — rotes X
+                // Abbrechen
                 IconButton(
                     onClick = onDismiss,
                     enabled = !busy,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Abbrechen",
-                        tint = if (!busy) Color(0xFFF44336) else Color.Gray
-                    )
+                    Icon(Icons.Default.Close, "Abbrechen",
+                        tint = if (!busy) Color(0xFFF44336) else Color.Gray)
                 }
-                // Tara — Textbutton
-                TextButton(
-                    onClick = onTare,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Tara", maxLines = 1)
-                }
-                // Kalibrieren — grüner Haken
-                IconButton(
-                    onClick = {
-                        busy = true
-                        onCalibrate(weightVal!!) { newFactor ->
-                            savedFactor = newFactor
-                            busy = false
-                            onDismiss()
-                        }
-                    },
-                    enabled = weightOk && !busy,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Kalibrieren",
-                        tint = if (weightOk && !busy) Color(0xFF4CAF50) else Color.Gray
-                    )
+                // Tara / Weiter / Kalibrieren
+                when (phase) {
+                    0 -> TextButton(
+                        onClick  = { onTareChannel(selectedChannel); phase = 1 },
+                        enabled  = !busy,
+                        modifier = Modifier.weight(2f)
+                    ) { Text("Tara") }
+
+                    1 -> IconButton(
+                        onClick  = {
+                            busy = true
+                            onCalibrateChannel(selectedChannel, weightVal!!) { newFactor ->
+                                resultMsg = "✓ Faktor: %.4f".format(newFactor)
+                                busy  = false
+                                phase = 0
+                                weightText = ""
+                            }
+                        },
+                        enabled  = weightOk && !busy,
+                        modifier = Modifier.weight(2f)
+                    ) {
+                        Icon(Icons.Default.Check, "Kalibrieren",
+                            tint = if (weightOk && !busy) Color(0xFF4CAF50) else Color.Gray)
+                    }
                 }
             }
         },
@@ -209,24 +312,23 @@ fun DeviceConfigDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("Kalibrierungsfaktor [-]", color = Color.Gray, fontSize = 13.sp)
-                        Text(
-                            text = if (uiState.deviceConfigLoaded) {
-                                "%.4f".format(uiState.calibrationFactor)
-                            } else {
-                                "—"
-                            },
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    TextButton(onClick = onOpenCalibration) {
-                        Text("Kalibrieren", fontSize = 13.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Kalibrierfaktoren [-]", color = Color.Gray, fontSize = 13.sp)
+                    Text(
+                        text = if (uiState.deviceConfigLoaded) {
+                            "R: %.2f  M: %.2f  F: %.2f".format(
+                                uiState.factorRear, uiState.factorMid, uiState.factorFront
+                            )
+                        } else { "—" },
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp
+                    )
+                    TextButton(
+                        onClick = onOpenCalibration,
+                        modifier = Modifier.padding(start = 0.dp),
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                    ) {
+                        Text("Kalibrieren →", fontSize = 13.sp)
                     }
                 }
 

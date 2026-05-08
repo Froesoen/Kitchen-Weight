@@ -4,7 +4,6 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
-import com.waage.util.formatWeight
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -20,38 +19,47 @@ import com.waage.data.CsvExporter
 import com.waage.data.TimeRange
 import com.waage.data.WeightBuffer
 import com.waage.data.WeightSample
+import com.waage.util.formatWeight
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 private const val TAG = "WaageViewModel"
 
 enum class WeightColor { WHITE, GREEN, RED }
 
 data class WaageUiState(
-    val weightG: Float = 0f,
-    val weightFormatted: String = "0.0 g",
-    val connectionState: ConnectionState = ConnectionState.Disconnected,
-    val selectedRange: TimeRange = TimeRange.ONE_MIN,
-    val graphSamples: List<WeightSample> = emptyList(),
-    val stats: WeightBuffer.Stats? = null,
-    val calibrationFactor: Float = 1f,
-    val alarmActive: Boolean = false,
-    val weightColor: WeightColor = WeightColor.WHITE,
-    val alarmTriggered: Boolean = false,
-    val alarmMuted: Boolean = false,
-    val alarmUpperG: Float = Float.NaN,
-    val alarmLowerG: Float = Float.NaN,
+    val weightG:           Float         = 0f,
+    val weightFormatted:   String        = "0.0 g",
+    // Einzelkanäle
+    val weightRearG:       Float         = 0f,
+    val weightMidG:        Float         = 0f,
+    val weightFrontG:      Float         = 0f,
 
-    val deviceSampleRateHz: Int = 20,
-    val devicePublishRateHz: Int = 0,
-    val deviceAvgSamples: Int = 0,
-    val deviceOfflineBufferSeconds: Int = 0,
-    val deviceOfflineBufferCapacity: Int = 0,
-    val deviceDisplayHz: Int = 2,
-    val deviceConfigLoaded: Boolean = false,
+    val connectionState:   ConnectionState = ConnectionState.Disconnected,
+    val selectedRange:     TimeRange     = TimeRange.ONE_MIN,
+    val graphSamples:      List<WeightSample> = emptyList(),
+    val stats:             WeightBuffer.Stats? = null,
+    val factorRear:        Float         = 1f,
+    val factorMid:         Float         = 1f,
+    val factorFront:       Float         = 1f,
+    val alarmActive:       Boolean       = false,
+    val weightColor:       WeightColor   = WeightColor.WHITE,
+    val alarmTriggered:    Boolean       = false,
+    val alarmMuted:        Boolean       = false,
+    val alarmUpperG:       Float         = Float.NaN,
+    val alarmLowerG:       Float         = Float.NaN,
 
-    val fftResult: FftResult? = null
+    val deviceSampleRateHz:          Int     = 20,
+    val devicePublishRateHz:         Int     = 0,
+    val deviceAvgSamples:            Int     = 0,
+    val deviceOfflineBufferSeconds:  Int     = 0,
+    val deviceOfflineBufferCapacity: Int     = 0,
+    val deviceDisplayHz:             Int     = 2,
+    val deviceConfigLoaded:          Boolean = false,
+
+    val fftResult:         FftResult?    = null
 )
 
 class WaageViewModel(
@@ -61,14 +69,14 @@ class WaageViewModel(
 
     private val _uiState = MutableStateFlow(WaageUiState())
     val uiState: StateFlow<WaageUiState> = _uiState
+    val lastReceivedFactor = MutableStateFlow<Pair<String, Float>?>(null)
 
-    private val settings = AppSettings(context)
-    private val buffer = WeightBuffer()
+    private val settings    = AppSettings(context)
+    private val buffer      = WeightBuffer()
     private val csvExporter = CsvExporter(context)
-    private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+    private val vibrator    = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
     private var btService: BluetoothService? = null
-	private val pendingBufferSamples = mutableListOf<WeightSample>()
 
     init {
         _uiState.value = _uiState.value.copy(
@@ -83,11 +91,8 @@ class WaageViewModel(
     private fun autoConnectLastDevice() {
         val lastAddress = settings.lastDeviceAddress
         if (lastAddress.isNullOrEmpty() || !canUseBluetooth()) return
-
         try {
-            val device = bluetoothAdapter.bondedDevices
-                ?.firstOrNull { it.address == lastAddress }
-
+            val device = bluetoothAdapter.bondedDevices?.firstOrNull { it.address == lastAddress }
             if (device != null) {
                 Log.d(TAG, "Auto-reconnect to $lastAddress")
                 service()?.connect(device)
@@ -99,8 +104,8 @@ class WaageViewModel(
 
     private fun createBluetoothService() {
         btService = BluetoothService(
-            adapter = bluetoothAdapter,
-            onMessage = ::handleMessage,
+            adapter       = bluetoothAdapter,
+            onMessage     = ::handleMessage,
             onStateChange = ::handleStateChange
         )
     }
@@ -108,110 +113,66 @@ class WaageViewModel(
     private fun canUseBluetooth(): Boolean = hasBluetoothConnectPermission(context)
 
     private fun service(): BluetoothService? = btService ?: run {
-        createBluetoothService()
-        btService
-    }
-
-    private fun safeDeviceLabel(device: BluetoothDevice): String {
-        if (!canUseBluetooth()) return "unknown / ${device.address}"
-        return try {
-            "${device.name ?: "unknown"} / ${device.address}"
-        } catch (_: SecurityException) {
-            "unknown / ${device.address}"
-        }
+        createBluetoothService(); btService
     }
 
     fun connect(device: BluetoothDevice) {
         if (!canUseBluetooth()) return
         settings.lastDeviceAddress = device.address
-        try {
-            service()?.connect(device)
-        } catch (e: Exception) {
-            Log.e(TAG, "connect", e)
-        }
+        try { service()?.connect(device) } catch (e: Exception) { Log.e(TAG, "connect", e) }
     }
 
     fun disconnect() {
-        try {
-            service()?.disconnect()
-        } catch (e: Exception) {
-            Log.e(TAG, "disconnect", e)
-        }
+        try { service()?.disconnect() } catch (e: Exception) { Log.e(TAG, "disconnect", e) }
     }
-	
-	fun reconnectDevice() {
+
+    fun reconnectDevice() {
         if (!canUseBluetooth()) return
-        try {
-            service()?.disconnect()
-        } catch (e: Exception) {
-            Log.e(TAG, "reconnect/disconnect", e)
-        }
-        // Kurze Verzögerung, dann mit letztem Gerät neu verbinden
+        try { service()?.disconnect() } catch (e: Exception) { Log.e(TAG, "reconnect/disconnect", e) }
         viewModelScope.launch {
             kotlinx.coroutines.delay(1000L)
             autoConnectLastDevice()
         }
     }
 
-    fun clearData() {
-        buffer.clear()
-        recalculateUi()
-    }
+    fun clearData() { buffer.clear(); recalculateUi() }
 
     fun sendTare() {
         if (!canUseBluetooth()) return
-        try {
-            service()?.sendTare()
-        } catch (e: SecurityException) {
-            Log.e(TAG, "tare", e)
-        }
+        try { service()?.sendTare() } catch (e: SecurityException) { Log.e(TAG, "tare", e) }
     }
 
-    fun sendCalibrate(knownWeightG: Float) {
+    fun sendTareChannel(channel: Char) {
         if (!canUseBluetooth()) return
-        try {
-            service()?.sendCalibrate(knownWeightG)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "calibrate", e)
-        }
+        try { service()?.sendJson("""{"type":"tare_channel","ch":"$channel"}""") }
+        catch (e: SecurityException) { Log.e(TAG, "tare_channel", e) }
+    }
+
+    fun sendCalibrateChannel(channel: Char, knownWeightG: Float) {
+        if (!canUseBluetooth()) return
+        try { service()?.sendJson("""{"type":"calibrate_channel","ch":"$channel","weight":$knownWeightG}""") }
+        catch (e: SecurityException) { Log.e(TAG, "calibrate_channel", e) }
     }
 
     fun requestDeviceConfig() {
         if (!canUseBluetooth()) return
-        try {
-            service()?.sendGetConfig()
-            service()?.sendGetFactor()
-        } catch (e: SecurityException) {
-            Log.e(TAG, "getconfig", e)
-        }
+        try { service()?.sendGetConfig(); service()?.sendGetFactor() } catch (e: SecurityException) { Log.e(TAG, "getconfig", e) }
+    }
+    fun setFactorManual(channel: Char, factor: Float) {
+        if (!canUseBluetooth()) return
+        try { service()?.sendSetFactor(channel, factor) }
+        catch (e: SecurityException) { Log.e(TAG, "set_factor", e) }
     }
 
-    fun sendDeviceConfig(
-        publishRateHz: Int,
-        avgSamples: Int,
-        offlineBufferSeconds: Int,
-        displayHz: Int
-    ) {
+    fun sendDeviceConfig(publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) {
         if (!canUseBluetooth()) return
-        try {
-            service()?.sendDeviceConfig(
-                publishRateHz,
-                avgSamples,
-                offlineBufferSeconds,
-                displayHz
-            )
-        } catch (e: SecurityException) {
-            Log.e(TAG, "sendDeviceConfig", e)
-        }
+        try { service()?.sendDeviceConfig(publishRateHz, avgSamples, offlineBufferSeconds, displayHz) }
+        catch (e: SecurityException) { Log.e(TAG, "sendDeviceConfig", e) }
     }
 
     fun resetDeviceConfig() {
         if (!canUseBluetooth()) return
-        try {
-            service()?.sendResetConfig()
-        } catch (e: SecurityException) {
-            Log.e(TAG, "resetconfig", e)
-        }
+        try { service()?.sendResetConfig() } catch (e: SecurityException) { Log.e(TAG, "resetconfig", e) }
     }
 
     fun setTimeRange(range: TimeRange) {
@@ -230,31 +191,64 @@ class WaageViewModel(
         _uiState.value = _uiState.value.copy(alarmLowerG = g)
     }
 
-    fun muteAlarm(muted: Boolean) {
-        settings.alarmMuted = muted
-        _uiState.value = _uiState.value.copy(alarmMuted = muted)
+    fun clearAlarms() {
+        settings.alarmUpperG = Float.NaN
+        settings.alarmLowerG = Float.NaN
+        _uiState.value = _uiState.value.copy(
+            alarmUpperG    = Float.NaN,
+            alarmLowerG    = Float.NaN,
+            alarmTriggered = false,
+            weightColor    = WeightColor.WHITE,
+            alarmActive    = false
+        )
+    }
+
+    fun muteAlarm() {
+        settings.alarmMuted = true
+        _uiState.value = _uiState.value.copy(alarmMuted = true)
     }
 
     private fun handleMessage(msg: WaageMessage) {
         viewModelScope.launch {
             when (msg) {
                 is WaageMessage.MeasurementBatch -> {
-                    msg.samples.forEach { sample ->
-                        buffer.add(
-                            WeightSample(
-                                sample.weightG,
-                                sample.timestampMs,
-                                synced = true
-                            )
+                    val now = System.currentTimeMillis()
+                    val newSamples = msg.samples.map { s ->
+                        WeightSample(
+                            weightG     = s.weightG,
+                            weightR     = s.weightR,
+                            weightM     = s.weightM,
+                            weightF     = s.weightF,
+                            timestampMs = s.timestampMs
                         )
                     }
+                    // ── DEBUG ──────────────────────────────────────────────────────
+                    val oldest = newSamples.minOf { it.timestampMs }
+                    val newest = newSamples.maxOf { it.timestampMs }
+                    Log.d("WAAGE_BUF", "Batch empfangen: ${newSamples.size} Samples | " +
+                            "oldest=${oldest} (${now - oldest}ms vor jetzt) | " +
+                            "newest=${newest} (${now - newest}ms vor jetzt)")
+                    // ───────────────────────────────────────────────────────────────
+                    buffer.addAll(newSamples)
+
+                    val visible = buffer.getSamples(_uiState.value.selectedRange)
+                    Log.d("WAAGE_BUF", "Nach addAll: buffer=${buffer.size()} | " +
+                            "sichtbar im ${_uiState.value.selectedRange.label}-Fenster: ${visible.size}")
+
                     recalculateUi()
-                    msg.samples.lastOrNull()?.let { checkAlarm(it.weightG) }
+                    newSamples.lastOrNull()?.let { checkAlarm(it.weightG) }
+                    // Einzelkanäle aus dem letzten Sample in UI-State übernehmen
+                    newSamples.lastOrNull()?.let { last ->
+                        _uiState.value = _uiState.value.copy(
+                            weightRearG  = last.weightR,
+                            weightMidG   = last.weightM,
+                            weightFrontG = last.weightF
+                        )
+                    }
                 }
 
                 is WaageMessage.FftData -> {
                     _uiState.value = _uiState.value.copy(fftResult = msg.result)
-                    Log.d(TAG, "fft_result peakHz=${msg.result.peakHz} bins=${msg.result.bins.size}")
                 }
 
                 is WaageMessage.TareDone -> {
@@ -262,112 +256,73 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.Factor -> {
-                    _uiState.value = _uiState.value.copy(calibrationFactor = msg.value)
-                }
-
-                is WaageMessage.NeedSync -> {
-                    if (canUseBluetooth()) {
-                        try {
-                            service()?.sendSync()
-                        } catch (e: SecurityException) {
-                            Log.e(TAG, "sendSync", e)
+                    _uiState.update {
+                        when (msg.channel) {
+                            "R"  -> it.copy(factorRear   = msg.value)
+                            "M"  -> it.copy(factorMid    = msg.value)
+                            "F"  -> it.copy(factorFront  = msg.value)
+                            else -> it
                         }
                     }
-                }
-				is WaageMessage.BufferStart -> {
-                    Log.d(TAG, "buffer_start: ${msg.count} Samples angekündigt")
-                    pendingBufferSamples.clear()
+                    lastReceivedFactor.value = msg.channel to msg.value
                 }
 
-                is WaageMessage.BufferSample -> {
-                    pendingBufferSamples.add(
-                        WeightSample(msg.weightG, msg.timestampMs, msg.synced)
-                    )
-                }
-
-                is WaageMessage.BufferEnd -> {
-                    Log.d(TAG, "buffer_end: ${pendingBufferSamples.size} Samples empfangen")
-                    if (pendingBufferSamples.isNotEmpty()) {
-                        buffer.addAll(pendingBufferSamples.sortedBy { it.timestampMs })
-                        pendingBufferSamples.clear()
-                        recalculateUi()
-                        checkAlarm(
-                            _uiState.value.graphSamples.lastOrNull()?.weightG ?: 0f
-                        )
-                    }
-                }
-				
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done → buffer abrufen")
-                    if (canUseBluetooth()) {
-                        try {
-                            service()?.sendGetBuffer()
-                        } catch (e: SecurityException) {
-                            Log.e(TAG, "sendGetBuffer", e)
-                        }
-                    }
+                    Log.d(TAG, "sync_done empfangen")
+                    requestDeviceConfig()   // ← Config erst nach erfolgreichem sync laden
                 }
 
                 is WaageMessage.Config -> {
-                    _uiState.value = _uiState.value.copy(
-                        deviceSampleRateHz = msg.sampleRateHz,
-                        devicePublishRateHz = msg.publishRateHz,
-                        deviceAvgSamples = msg.avgSamples,
-                        deviceOfflineBufferSeconds = msg.offlineBufferSeconds,
+                    _uiState.update { it.copy(
+                        deviceSampleRateHz          = msg.sampleRateHz,
+                        devicePublishRateHz         = msg.publishRateHz,
+                        deviceAvgSamples            = msg.avgSamples,
+                        deviceOfflineBufferSeconds  = msg.offlineBufferSeconds,
                         deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
-                        deviceDisplayHz = msg.displayHz,
-                        deviceConfigLoaded = true,
-                        // Faktor nur übernehmen wenn ESP ihn mitgeschickt hat (> 0)
-                        calibrationFactor = if (msg.calibrationFactor > 0f)
-                            msg.calibrationFactor
-                        else
-                            _uiState.value.calibrationFactor
-                    )
+                        deviceDisplayHz             = msg.displayHz,
+                        deviceConfigLoaded          = true,
+                        factorRear  = if (msg.factorRear  > 0f) msg.factorRear  else it.factorRear,
+                        factorMid   = if (msg.factorMid   > 0f) msg.factorMid   else it.factorMid,
+                        factorFront = if (msg.factorFront > 0f) msg.factorFront else it.factorFront
+                    )}
                 }
 
-                is WaageMessage.Error -> {
-                    Log.w(TAG, "ESP32 error: ${msg.message}")
-                }
+                is WaageMessage.Error -> Log.w(TAG, "ESP32 error: ${msg.message}")
+                else -> {}
             }
         }
     }
 
     private fun handleStateChange(state: ConnectionState) {
         viewModelScope.launch {
-            val disconnected = state is ConnectionState.Disconnected ||
-                    state is ConnectionState.Error
+            Log.d("WAAGE_BUF", "StateChange → $state | buffer.size=${buffer.size()}")
+            val disconnected = state is ConnectionState.Disconnected || state is ConnectionState.Error
             _uiState.value = _uiState.value.copy(
                 connectionState    = state,
                 deviceConfigLoaded = if (disconnected) false else _uiState.value.deviceConfigLoaded,
                 alarmMuted         = if (disconnected) false else _uiState.value.alarmMuted
             )
-            if (state is ConnectionState.Connected) {
-                requestDeviceConfig()
-            }
+            // requestDeviceConfig() hier entfernt → wird nach sync_done aufgerufen
         }
     }
 
     private fun recalculateUi() {
-        val samples = buffer.getSamples(_uiState.value.selectedRange)
+        val samples      = buffer.getSamples(_uiState.value.selectedRange)
         val latestWeight = samples.lastOrNull()?.weightG ?: 0f
-
-        val stats = if (samples.isEmpty()) {
-            null
-        } else {
+        val stats = if (samples.isEmpty()) null else {
             val weights = samples.map { it.weightG }
             WeightBuffer.Stats(
-                min = weights.minOrNull() ?: 0f,
-                max = weights.maxOrNull() ?: 0f,
-                avg = weights.average().toFloat(),
+                min   = weights.minOrNull() ?: 0f,
+                max   = weights.maxOrNull() ?: 0f,
+                avg   = weights.average().toFloat(),
                 count = weights.size
             )
         }
-
         _uiState.value = _uiState.value.copy(
-            weightG = latestWeight,
+            weightG         = latestWeight,
             weightFormatted = formatWeight(latestWeight),
-            graphSamples = samples,
-            stats = stats
+            graphSamples    = samples,
+            stats           = stats
         )
     }
 
@@ -378,43 +333,31 @@ class WaageViewModel(
         val hasLower = !lower.isNaN()
 
         val color = when {
-            !hasUpper && !hasLower -> WeightColor.WHITE
-            hasLower && !hasUpper -> if (weightG < lower) WeightColor.RED else WeightColor.GREEN
-            hasUpper && !hasLower -> if (weightG > upper) WeightColor.RED else WeightColor.GREEN
-            weightG in lower..upper -> WeightColor.GREEN
-            else -> WeightColor.RED
+            !hasUpper && !hasLower          -> WeightColor.WHITE
+            hasLower && !hasUpper           -> if (weightG < lower) WeightColor.RED else WeightColor.GREEN
+            hasUpper && !hasLower           -> if (weightG > upper) WeightColor.RED else WeightColor.GREEN
+            weightG in lower..upper         -> WeightColor.GREEN
+            else                            -> WeightColor.RED
         }
-
-        val triggered = color == WeightColor.RED
+        val triggered    = color == WeightColor.RED
         val prevTriggered = _uiState.value.alarmTriggered
-
         _uiState.value = _uiState.value.copy(
-            weightColor = color,
-			alarmActive    = hasUpper || hasLower,
+            weightColor    = color,
+            alarmActive    = hasUpper || hasLower,
             alarmTriggered = triggered
         )
-
-        if (triggered && !prevTriggered && !_uiState.value.alarmMuted) {
-            triggerVibration()
-        }
+        if (triggered && !prevTriggered && !_uiState.value.alarmMuted) triggerVibration()
     }
 
     private fun triggerVibration() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(
-                    VibrationEffect.createWaveform(
-                        longArrayOf(0, 300, 150, 300),
-                        -1
-                    )
-                )
+                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300), -1))
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(longArrayOf(0, 300, 150, 300), -1)
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "vibration failed", e)
-        }
+        } catch (e: Exception) { Log.w(TAG, "vibration failed", e) }
     }
 
     fun exportCsv(name: String) {
@@ -423,7 +366,7 @@ class WaageViewModel(
             buffer            = buffer,
             range             = _uiState.value.selectedRange,
             measurementName   = name,
-            calibrationFactor = _uiState.value.calibrationFactor
+            calibrationFactor = (_uiState.value.factorRear + _uiState.value.factorMid + _uiState.value.factorFront) / 3f
         )
     }
 
@@ -431,23 +374,13 @@ class WaageViewModel(
         if (!canUseBluetooth()) return emptyList()
         return try {
             bluetoothAdapter.bondedDevices?.toList()?.sortedBy { device ->
-                try {
-                    device.name ?: device.address
-                } catch (_: SecurityException) {
-                    device.address
-                }
+                try { device.name ?: device.address } catch (_: SecurityException) { device.address }
             } ?: emptyList()
-        } catch (e: SecurityException) {
-            Log.w(TAG, "getPairedDevices failed", e)
-            emptyList()
-        }
+        } catch (e: SecurityException) { Log.w(TAG, "getPairedDevices failed", e); emptyList() }
     }
 
     override fun onCleared() {
         super.onCleared()
-        try {
-            btService?.disconnect()
-        } catch (_: Exception) {
-        }
+        try { btService?.disconnect() } catch (_: Exception) {}
     }
 }
