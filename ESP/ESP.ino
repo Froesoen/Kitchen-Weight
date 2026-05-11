@@ -100,6 +100,7 @@ constexpr uint8_t DISP_HIST        = 128;
 // ── FFT – fest, nicht konfigurierbar ─────────────────────────────────────────
 constexpr uint16_t FFT_SIZE       = 128;
 constexpr float    FFT_BIN_RES    = (float)SAMPLE_RATE_HZ / (float)FFT_SIZE;
+constexpr uint8_t  FFT_BARS       = 32;   // Display-Balken für BT-Rohdaten
 
 // KitchenAid Stufen-Frequenzen (für FFT-BT-Auswertung und Stufenanzeige)
 constexpr float   KA_SPEEDS[]    = { 1.00f, 1.58f, 2.25f, 3.00f, 3.75f, 4.67f };
@@ -213,6 +214,8 @@ uint16_t fftSampleCount    = 0;
 float   fftPeakHz          = 0.f;
 float   fftPeakAmp         = 0.f;
 float   fftPeakHold        = 1.f;
+float   fftBarHeights[FFT_BARS] = {};   // Balkenhöhen für BT-Übertragung
+bool    fftResultReady      = false;    // FFT abgeschlossen, Display darf lesen
 
 // ── Delta-Zustand ─────────────────────────────────────────────────────────────
 float    deltaActiveRef      = 0.0f;  // aktive Referenz für Delta-Anzeige
