@@ -57,6 +57,8 @@ data class WaageUiState(
     val deviceOfflineBufferSeconds:  Int     = 0,
     val deviceOfflineBufferCapacity: Int     = 0,
     val deviceDisplayHz:             Int     = 2,
+    val deviceDeltaDurationMs:       Int     = 2000,
+    val deviceDeltaTolerance:        Float   = 2.0f,
     val deviceConfigLoaded:          Boolean = false,
 
     val fftResult:         FftResult?    = null
@@ -164,10 +166,21 @@ class WaageViewModel(
         catch (e: SecurityException) { Log.e(TAG, "set_factor", e) }
     }
 
-    fun sendDeviceConfig(publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) {
+    fun sendDeviceConfig(
+        publishRateHz: Int,
+        avgSamples: Int,
+        offlineBufferSeconds: Int,
+        displayHz: Int,
+        deltaDurationMs: Int,
+        deltaTolerance: Float
+    ) {
         if (!canUseBluetooth()) return
-        try { service()?.sendDeviceConfig(publishRateHz, avgSamples, offlineBufferSeconds, displayHz) }
-        catch (e: SecurityException) { Log.e(TAG, "sendDeviceConfig", e) }
+        try {
+            service()?.sendDeviceConfig(
+                publishRateHz, avgSamples, offlineBufferSeconds,
+                displayHz, deltaDurationMs, deltaTolerance
+            )
+        } catch (e: SecurityException) { Log.e(TAG, "sendDeviceConfig", e) }
     }
 
     fun resetDeviceConfig() {
@@ -280,6 +293,8 @@ class WaageViewModel(
                         deviceOfflineBufferSeconds  = msg.offlineBufferSeconds,
                         deviceOfflineBufferCapacity = msg.offlineBufferCapacity,
                         deviceDisplayHz             = msg.displayHz,
+                        deviceDeltaDurationMs       = msg.deltaDurationMs,
+                        deviceDeltaTolerance        = msg.deltaTolerance,
                         deviceConfigLoaded          = true,
                         factorRear  = if (msg.factorRear  > 0f) msg.factorRear  else it.factorRear,
                         factorMid   = if (msg.factorMid   > 0f) msg.factorMid   else it.factorMid,

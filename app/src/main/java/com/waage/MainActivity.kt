@@ -287,18 +287,18 @@ fun WaageScreen(
 
     if (showDeviceConfig) {
         DeviceConfigDialog(
-            uiState  = uiState,
+            uiState   = uiState,
             onDismiss = { showDeviceConfig = false },
-            onLoad   = {
+            onLoad    = {
                 if (bluetoothPermissionsGranted) viewModel.requestDeviceConfig()
                 else showBluetoothPermissionDialog = true
             },
-            // sampleRateHz entfernt — Signatur jetzt (prate, avg, bufsec, disphz)
-            onSave = { prate, avg, bufsec, disphz ->
-                if (bluetoothPermissionsGranted) viewModel.sendDeviceConfig(prate, avg, bufsec, disphz)
+            onSave    = { prate, avg, bufsec, disphz, deltaDur, deltaTol ->
+                if (bluetoothPermissionsGranted)
+                    viewModel.sendDeviceConfig(prate, avg, bufsec, disphz, deltaDur, deltaTol)
                 else showBluetoothPermissionDialog = true
             },
-            onReset = {
+            onReset   = {
                 if (bluetoothPermissionsGranted) viewModel.resetDeviceConfig()
                 else showBluetoothPermissionDialog = true
             },

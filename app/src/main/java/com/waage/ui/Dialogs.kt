@@ -1,9 +1,9 @@
 package com.waage.ui
 
-// NACHHER
 import android.bluetooth.BluetoothDevice
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -11,8 +11,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.*
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -240,232 +243,318 @@ fun CalibrationDialog(
         dismissButton = {}
     )
 }
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceConfigDialog(
     uiState: com.waage.viewmodel.WaageUiState,
     onDismiss: () -> Unit,
     onLoad: () -> Unit,
-    onSave: (publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) -> Unit,
+    onSave: (publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int,
+             displayHz: Int, deltaDurationMs: Int, deltaTolerance: Float) -> Unit,
     onReset: () -> Unit,
     onOpenCalibration: () -> Unit
 ) {
     LaunchedEffect(Unit) { onLoad() }
 
-    var prateText by remember(uiState.devicePublishRateHz) {
-        mutableStateOf(uiState.devicePublishRateHz.toString())
-    }
-    var avgText by remember(uiState.deviceAvgSamples) {
-        mutableStateOf(uiState.deviceAvgSamples.toString())
-    }
-    var bufsecText by remember(uiState.deviceOfflineBufferSeconds) {
-        mutableStateOf(uiState.deviceOfflineBufferSeconds.toString())
-    }
-    var dispHzText by remember(uiState.deviceDisplayHz) {
-        mutableStateOf(uiState.deviceDisplayHz.toString())
-    }
+    var prateText    by remember(uiState.devicePublishRateHz)        { mutableStateOf(uiState.devicePublishRateHz.toString()) }
+    var avgText      by remember(uiState.deviceAvgSamples)           { mutableStateOf(uiState.deviceAvgSamples.toString()) }
+    var bufsecText   by remember(uiState.deviceOfflineBufferSeconds) { mutableStateOf(uiState.deviceOfflineBufferSeconds.toString()) }
+    var dispHzText   by remember(uiState.deviceDisplayHz)            { mutableStateOf(uiState.deviceDisplayHz.toString()) }
+    var deltaDurText by remember(uiState.deviceDeltaDurationMs)      { mutableStateOf(uiState.deviceDeltaDurationMs.toString()) }
+    var deltaTolText by remember(uiState.deviceDeltaTolerance)       { mutableStateOf(uiState.deviceDeltaTolerance.toString()) }
 
     var showResetConfirm by remember { mutableStateOf(false) }
 
-    val prateVal = prateText.toIntOrNull()
-    val avgVal = avgText.toIntOrNull()
-    val bufsecVal = bufsecText.toIntOrNull()
-    val dispHzVal = dispHzText.toIntOrNull()
+    val prateVal    = prateText.toIntOrNull()
+    val avgVal      = avgText.toIntOrNull()
+    val bufsecVal   = bufsecText.toIntOrNull()
+    val dispHzVal   = dispHzText.toIntOrNull()
+    val deltaDurVal = deltaDurText.toIntOrNull()
+    val deltaTolVal = deltaTolText.replace(',', '.').toFloatOrNull()
 
-    val prateOk = prateVal != null && prateVal in 1..20
-    val avgOk = avgVal != null && avgVal in 1..4
-    val bufsecOk = bufsecVal != null && bufsecVal in 10..180
-    val dispHzOk = dispHzVal != null && dispHzVal in 1..10
-    val allValid = prateOk && avgOk && bufsecOk && dispHzOk
+    val prateOk    = prateVal    != null && prateVal    in 1..20
+    val avgOk      = avgVal      != null && avgVal      in 1..4
+    val bufsecOk   = bufsecVal   != null && bufsecVal   in 10..180
+    val dispHzOk   = dispHzVal   != null && dispHzVal   in 1..10
+    val deltaDurOk = deltaDurVal != null && deltaDurVal in 200..10000
+    val deltaTolOk = deltaTolVal != null && deltaTolVal in 0.5f..50.0f
+    val allValid   = prateOk && avgOk && bufsecOk && dispHzOk && deltaDurOk && deltaTolOk
 
+    val enabled = uiState.deviceConfigLoaded
+
+    // Reset-Bestätigungsdialog
     if (showResetConfirm) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
             title = { Text("Zurücksetzen?") },
-            text = { Text("Die Gerätekonfiguration wird auf Werkseinstellungen zurückgesetzt.") },
+            text  = { Text("Die Gerätekonfiguration wird auf Werkseinstellungen zurückgesetzt.") },
             confirmButton = {
                 Button(
-                    onClick = {
-                        onReset()
-                        showResetConfirm = false
-                        onDismiss()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEF9A9A),
-                        contentColor = Color.Black
+                    onClick = { onReset(); showResetConfirm = false; onDismiss() },
+                    colors  = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFEF9A9A), contentColor = Color.Black
                     )
-                ) {
-                    Text("Zurücksetzen")
-                }
+                ) { Text("Zurücksetzen") }
             },
             dismissButton = {
-                TextButton(onClick = { showResetConfirm = false }) {
-                    Text("Abbrechen")
-                }
+                TextButton(onClick = { showResetConfirm = false }) { Text("Abbrechen") }
             }
         )
     }
 
-    AlertDialog(
+    // Vollbild-Dialog
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Gerätekonfiguration", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color    = MaterialTheme.colorScheme.background
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
 
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Kalibrierfaktoren [-]", color = Color.Gray, fontSize = 13.sp)
-                    Text(
-                        text = if (uiState.deviceConfigLoaded) {
-                            "R: %.2f  M: %.2f  F: %.2f".format(
-                                uiState.factorRear, uiState.factorMid, uiState.factorFront
-                            )
-                        } else { "—" },
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 13.sp
-                    )
-                    TextButton(
-                        onClick = onOpenCalibration,
-                        modifier = Modifier.padding(start = 0.dp),
-                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
-                    ) {
-                        Text("Kalibrieren →", fontSize = 13.sp)
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Abtastrate [Hz]", color = Color.Gray, fontSize = 13.sp)
-                    Text(
-                        text = "20 (fest)",
-                        color = Color.Gray,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                HorizontalDivider()
-
-                if (!uiState.deviceConfigLoaded) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Text("Lade Gerätekonfiguration…", color = Color.Gray, fontSize = 13.sp)
-                    }
-                }
-
-                OutlinedTextField(
-                    value = prateText,
-                    onValueChange = { prateText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Senderate [Hz]") },
-                    supportingText = { Text("1 – 20 Hz") },
-                    isError = prateText.isNotEmpty() && !prateOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
-                )
-
-                OutlinedTextField(
-                    value = avgText,
-                    onValueChange = { avgText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Werte für Glättung [-]") },
-                    supportingText = { Text("1 – 4 (bei 20 Hz Abtastrate)") },
-                    isError = avgText.isNotEmpty() && !avgOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
-                )
-
-                OutlinedTextField(
-                    value = bufsecText,
-                    onValueChange = { bufsecText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Offline-Puffer [s]") },
-                    supportingText = { Text("10 – 180 s (20 Hz × 180 s = 3600 Samples max.)") },
-                    isError = bufsecText.isNotEmpty() && !bufsecOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
-                )
-
-                OutlinedTextField(
-                    value = dispHzText,
-                    onValueChange = { dispHzText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Display-Aktualisierung [Hz]") },
-                    supportingText = { Text("1 – 10 Hz") },
-                    isError = dispHzText.isNotEmpty() && !dispHzOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.deviceConfigLoaded
-                )
-
-                if (uiState.deviceConfigLoaded) {
-                    Text(
-                        "Pufferkapazität: ${uiState.deviceOfflineBufferCapacity} Samples" +
-                                " (${bufsecVal ?: uiState.deviceOfflineBufferSeconds} s × 20 Hz)",
-                        color = Color.Gray,
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Abbrechen — rotes X
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Abbrechen",
-                        tint = Color(0xFFF44336)
-                    )
-                }
-                // Reset — roter Text
-                TextButton(
-                    onClick = { showResetConfirm = true },
-                    enabled = uiState.deviceConfigLoaded,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        "Reset",
-                        maxLines = 1,
-                        color = if (uiState.deviceConfigLoaded) Color(0xFFEF9A9A) else Color.Gray
-                    )
-                }
-                // Speichern — grüner Haken
-                IconButton(
-                    onClick = {
-                        onSave(prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!)
-                        onDismiss()
+                // TopAppBar
+                TopAppBar(
+                    title = { Text("Gerätekonfiguration", fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Schließen")
+                        }
                     },
-                    enabled = uiState.deviceConfigLoaded && allValid,
-                    modifier = Modifier.weight(1f)
+                    actions = {
+                        TextButton(
+                            onClick  = {
+                                onSave(prateVal!!, avgVal!!, bufsecVal!!, dispHzVal!!, deltaDurVal!!, deltaTolVal!!)
+                                onDismiss()
+                            },
+                            enabled  = enabled && allValid
+                        ) {
+                            Text(
+                                "Speichern",
+                                color = if (enabled && allValid) MaterialTheme.colorScheme.primary
+                                        else Color.Gray
+                            )
+                        }
+                    }
+                )
+
+                // Inhalt scrollbar
+                LazyColumn(
+                    modifier            = Modifier.weight(1f),
+                    contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Speichern",
-                        tint = if (uiState.deviceConfigLoaded && allValid) Color(0xFF4CAF50) else Color.Gray
-                    )
+
+                    // ── Lade-Indikator ───────────────────────────────────────
+                    if (!enabled) {
+                        item {
+                            Row(
+                                verticalAlignment    = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier             = Modifier.padding(vertical = 12.dp)
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("Lade Gerätekonfiguration…", color = Color.Gray, fontSize = 13.sp)
+                            }
+                        }
+                    }
+
+                    // ── Sektion: MESSUNG ─────────────────────────────────────
+                    item { SectionHeader("Messung") }
+
+                    item {
+                        ConfigTextField(
+                            value        = prateText,
+                            onValueChange = { prateText = it.filter(Char::isDigit) },
+                            label        = "Senderate [Hz]",
+                            hint         = "1 – 20 Hz",
+                            isError      = prateText.isNotEmpty() && !prateOk,
+                            enabled      = enabled
+                        )
+                    }
+                    item {
+                        ConfigTextField(
+                            value        = avgText,
+                            onValueChange = { avgText = it.filter(Char::isDigit) },
+                            label        = "Glättung (Samples)",
+                            hint         = "1 – 4",
+                            isError      = avgText.isNotEmpty() && !avgOk,
+                            enabled      = enabled
+                        )
+                    }
+                    item {
+                        ConfigTextField(
+                            value        = bufsecText,
+                            onValueChange = { bufsecText = it.filter(Char::isDigit) },
+                            label        = "Offline-Puffer [s]",
+                            hint         = "10 – 180 s",
+                            isError      = bufsecText.isNotEmpty() && !bufsecOk,
+                            enabled      = enabled
+                        )
+                    }
+                    if (enabled) {
+                        item {
+                            Text(
+                                "Pufferkapazität: ${uiState.deviceOfflineBufferCapacity} Samples" +
+                                " (${bufsecVal ?: uiState.deviceOfflineBufferSeconds} s × 20 Hz)",
+                                color    = Color.Gray,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
+
+                    // ── Sektion: DELTA-ERKENNUNG ─────────────────────────────
+                    item { SectionHeader("Delta-Erkennung") }
+
+                    item {
+                        ConfigTextField(
+                            value        = deltaDurText,
+                            onValueChange = { deltaDurText = it.filter(Char::isDigit) },
+                            label        = "Plateau-Mindestdauer [ms]",
+                            hint         = "200 – 10000 ms",
+                            isError      = deltaDurText.isNotEmpty() && !deltaDurOk,
+                            enabled      = enabled
+                        )
+                    }
+                    item {
+                        ConfigTextField(
+                            value        = deltaTolText,
+                            onValueChange = { deltaTolText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                            label        = "Toleranzband [g]",
+                            hint         = "0.5 – 50.0 g",
+                            isError      = deltaTolText.isNotEmpty() && !deltaTolOk,
+                            enabled      = enabled,
+                            isDecimal    = true
+                        )
+                    }
+
+                    // ── Sektion: DISPLAY ─────────────────────────────────────
+                    item { SectionHeader("Display") }
+
+                    item {
+                        ConfigTextField(
+                            value        = dispHzText,
+                            onValueChange = { dispHzText = it.filter(Char::isDigit) },
+                            label        = "Aktualisierungsrate [Hz]",
+                            hint         = "1 – 10 Hz",
+                            isError      = dispHzText.isNotEmpty() && !dispHzOk,
+                            enabled      = enabled
+                        )
+                    }
+                    item {
+                        Row(
+                            modifier              = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment     = Alignment.CenterVertically
+                        ) {
+                            Text("Abtastrate", color = Color.Gray, fontSize = 13.sp)
+                            Text("20 Hz (fest)", color = Color.Gray, fontSize = 13.sp)
+                        }
+                    }
+
+                    // ── Sektion: KALIBRIERUNG ────────────────────────────────
+                    item { SectionHeader("Kalibrierung") }
+
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                if (enabled)
+                                    "R: %.4f   M: %.4f   F: %.4f".format(
+                                        uiState.factorRear, uiState.factorMid, uiState.factorFront
+                                    )
+                                else "—",
+                                fontSize   = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            TextButton(
+                                onClick        = onOpenCalibration,
+                                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                            ) {
+                                Text("Kalibrieren →", fontSize = 14.sp)
+                            }
+                        }
+                    }
+
+                    // ── Sektion: GEFAHRENZONE ────────────────────────────────
+                    item { SectionHeader("Gefahrenzone", color = Color(0xFFEF9A9A)) }
+
+                    item {
+                        OutlinedButton(
+                            onClick  = { showResetConfirm = true },
+                            enabled  = enabled,
+                            colors   = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFEF9A9A)
+                            ),
+                            border   = androidx.compose.foundation.BorderStroke(
+                                1.dp, if (enabled) Color(0xFFEF9A9A) else Color.Gray
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Text("Auf Werkseinstellungen zurücksetzen")
+                        }
+                    }
+
+                    item { Spacer(modifier = Modifier.height(24.dp)) }
                 }
             }
-        },
-        dismissButton = {}
+        }
+    }
+}
+
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+@Composable
+private fun SectionHeader(text: String, color: Color = Color.Gray) {
+    Text(
+        text     = text.uppercase(),
+        color    = color,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+    )
+    HorizontalDivider(color = color.copy(alpha = 0.3f))
+    Spacer(modifier = Modifier.height(4.dp))
+}
+
+@Composable
+private fun ConfigTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    hint: String,
+    isError: Boolean,
+    enabled: Boolean,
+    isDecimal: Boolean = false
+) {
+    OutlinedTextField(
+        value           = value,
+        onValueChange   = onValueChange,
+        label           = { Text(label) },
+        supportingText  = { Text(hint) },
+        isError         = isError,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (isDecimal) KeyboardType.Decimal else KeyboardType.Number
+        ),
+        singleLine      = true,
+        modifier        = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        enabled         = enabled
     )
 }
 

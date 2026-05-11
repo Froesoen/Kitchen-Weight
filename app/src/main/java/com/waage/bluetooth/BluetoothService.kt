@@ -57,6 +57,8 @@ sealed class WaageMessage {
         val offlineBufferSeconds: Int,
         val offlineBufferCapacity: Int,
         val displayHz: Int,
+        val deltaDurationMs: Int = 2000,
+        val deltaTolerance: Float = 2.0f,
         val factorRear:  Float = -1f,
         val factorMid:   Float = -1f,
         val factorFront: Float = -1f
@@ -232,6 +234,8 @@ class BluetoothService(
                     offlineBufferSeconds  = obj.optInt("offlineBufferSeconds", 60),
                     offlineBufferCapacity = obj.optInt("offlineBufferCapacity", 1200),
                     displayHz             = obj.optInt("displayHz", 2),
+                    deltaDurationMs       = obj.optInt("deltaDurationMs", 2000),
+                    deltaTolerance        = obj.optDouble("deltaTolerance", 2.0).toFloat(),
                     factorRear            = obj.optDouble("factorRear",  -1.0).toFloat(),
                     factorMid             = obj.optDouble("factorMid",   -1.0).toFloat(),
                     factorFront           = obj.optDouble("factorFront", -1.0).toFloat()
@@ -266,6 +270,12 @@ class BluetoothService(
         sendJson("""{"type":"set_factor","ch":"$ch","factor":$factor}""")  // ← NEU
     fun sendSync()           = sendJson("""{"type":"sync","unix":${System.currentTimeMillis()}}""")
     fun sendResetConfig()    = sendJson("""{"type":"reset_config"}""")
-    fun sendDeviceConfig(publishRateHz: Int, avgSamples: Int, offlineBufferSeconds: Int, displayHz: Int) =
-        sendJson("""{"type":"set_config","publishRateHz":$publishRateHz,"avgSamples":$avgSamples,"offlineBufferSeconds":$offlineBufferSeconds,"displayHz":$displayHz}""")
+    fun sendDeviceConfig(
+        publishRateHz: Int,
+        avgSamples: Int,
+        offlineBufferSeconds: Int,
+        displayHz: Int,
+        deltaDurationMs: Int,
+        deltaTolerance: Float
+    ) = sendJson("""{"type":"setconfig","publishRateHz":$publishRateHz,"avgSamples":$avgSamples,"offlineBufferSeconds":$offlineBufferSeconds,"displayHz":$displayHz,"deltaDurationMs":$deltaDurationMs,"deltaTolerance":$deltaTolerance}""")
 }
