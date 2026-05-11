@@ -349,9 +349,6 @@ bool saveConfig(const DeviceConfig& c) {
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
     if (!btConnected) return;
-    size_t written = BT.print(s);
-    Serial.printf("[btSend] len=%d written=%d btConn=%d\n",
-                  s.length(), (int)written, (int)btConnected);
 }
 
 void btSendJson(JsonDocument& doc) {
@@ -795,7 +792,7 @@ void btDisplayTask(void* param) {
                     btSend("{\"type\":\"fft_result\",\"peakHz\":0.0,"
                            "\"peakAmp\":0.0,\"machineOff\":true}\n");
                 }
-                Serial.println("[FFT] Span < 5g → Maschine aus");
+                // Serial.println("[FFT] Span < 5g → Maschine aus");
 
             } else {
                 // Hamming-Fensterung + FFT
@@ -865,8 +862,7 @@ void btDisplayTask(void* param) {
                     btSend(msg);
                 }
 
-                Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n",
-                              fftPeakHz, fftPeakAmp, fftPeakHold);
+                // Serial.printf("[FFT] Peak: %.3f Hz | Amp: %.1f | Hold: %.1f\n", fftPeakHz, fftPeakAmp, fftPeakHold);
             }
         }
 
@@ -1068,7 +1064,10 @@ void setup() {
     loadFactors();
     loadConfig();    // Konfiguration + applyDerivedConfig()
     Serial.printf("[setup] factorRear=%.4f  factorMid=%.4f  factorFront=%.4f\n",
-                factorRear, factorMid, factorFront);
+                  factorRear, factorMid, factorFront);
+    Serial.printf("[setup] cfg: prate=%uHz avg=%u buf=%us dispHz=%u deltaDur=%ums deltaTol=%.1fg\n",
+                  config.publishRateHz, config.avgSamples, config.offlineBufferSeconds,
+                  config.displayHz, config.deltaDurationMs, config.deltaTolerance);
 
     // ── HX711 initialisieren ─────────────────────────────────────────────────
     scaleRear.begin (HX711_REAR_DOUT,  HX711_REAR_SCK);

@@ -235,18 +235,10 @@ class WaageViewModel(
                             timestampMs = s.timestampMs
                         )
                     }
-                    // ── DEBUG ──────────────────────────────────────────────────────
-                    val oldest = newSamples.minOf { it.timestampMs }
-                    val newest = newSamples.maxOf { it.timestampMs }
-                    Log.d("WAAGE_BUF", "Batch empfangen: ${newSamples.size} Samples | " +
-                            "oldest=${oldest} (${now - oldest}ms vor jetzt) | " +
-                            "newest=${newest} (${now - newest}ms vor jetzt)")
-                    // ───────────────────────────────────────────────────────────────
+					
                     buffer.addAll(newSamples)
 
                     val visible = buffer.getSamples(_uiState.value.selectedRange)
-                    Log.d("WAAGE_BUF", "Nach addAll: buffer=${buffer.size()} | " +
-                            "sichtbar im ${_uiState.value.selectedRange.label}-Fenster: ${visible.size}")
 
                     recalculateUi()
                     newSamples.lastOrNull()?.let { checkAlarm(it.weightG) }
@@ -281,7 +273,7 @@ class WaageViewModel(
                 }
 
                 is WaageMessage.SyncDone -> {
-                    Log.d(TAG, "sync_done empfangen")
+                    Log.i(TAG, "sync_done empfangen")
                     requestDeviceConfig()   // ← Config erst nach erfolgreichem sync laden
                 }
 
@@ -310,7 +302,7 @@ class WaageViewModel(
 
     private fun handleStateChange(state: ConnectionState) {
         viewModelScope.launch {
-            Log.d("WAAGE_BUF", "StateChange → $state | buffer.size=${buffer.size()}")
+            Log.i("WAAGE_BUF", "StateChange → $state | buffer.size=${buffer.size()}")
             val disconnected = state is ConnectionState.Disconnected || state is ConnectionState.Error
             _uiState.value = _uiState.value.copy(
                 connectionState    = state,
