@@ -69,6 +69,8 @@
 #define NVS_KEY_BUFSEC  "bufsec"
 #define NVS_KEY_DISPHZ  "disphz"
 #define NVS_KEY_DISPMOD "dispmode"
+#define NVS_KEY_DELTA_DUR "ddur"
+#define NVS_KEY_DELTA_TOL "dtol"
 
 // ── Feste Sampling-Konstanten ─────────────────────────────────────────────────
 constexpr uint8_t  SAMPLE_RATE_HZ   = 20;
@@ -89,25 +91,23 @@ constexpr uint16_t MAX_OFFLINE_BUFFER         = 1800;
 // ── Display-Layout ────────────────────────────────────────────────────────────
 constexpr uint8_t DISPLAY_WIDTH    = 128;
 constexpr uint8_t DISPLAY_HEIGHT   = 64;
-constexpr uint8_t VALUE_HEIGHT     = 20;
+constexpr uint8_t VALUE_HEIGHT     = 28;   // Platz für 2 Zeilen (Gewicht + Delta/Stufe)
 constexpr uint8_t PLOT_HEIGHT      = DISPLAY_HEIGHT - VALUE_HEIGHT;
 constexpr uint8_t PLOT_Y_TOP       = VALUE_HEIGHT;
 constexpr uint8_t PLOT_Y_BOTTOM    = DISPLAY_HEIGHT - 1;
 constexpr uint8_t DISP_HIST        = 128;
 
 // ── FFT – fest, nicht konfigurierbar ─────────────────────────────────────────
-constexpr uint16_t FFT_SIZE       = 128;   // Samples/Frame → 6.4 s bei 20 Hz
+constexpr uint16_t FFT_SIZE       = 128;
 constexpr float    FFT_BIN_RES    = (float)SAMPLE_RATE_HZ / (float)FFT_SIZE;
-                                           // = 0.156 Hz/Bin
-constexpr uint8_t  FFT_BAR_PX    = 4;
-constexpr uint8_t  FFT_BARS      = DISPLAY_WIDTH / FFT_BAR_PX;  // 32
-constexpr uint8_t  FFT_LABEL_H   = 10;
-constexpr uint8_t  FFT_AXIS_H    = 8;
-constexpr uint8_t  FFT_MAX_BAR_H = DISPLAY_HEIGHT - FFT_LABEL_H - FFT_AXIS_H;
 
-// KitchenAid Stufen-Frequenzen (planetare Umlauffrequenz des Frontkanals)
+// KitchenAid Stufen-Frequenzen (für FFT-BT-Auswertung und Stufenanzeige)
 constexpr float   KA_SPEEDS[]    = { 1.00f, 1.58f, 2.25f, 3.00f, 3.75f, 4.67f };
 constexpr uint8_t KA_SPEED_COUNT = 6;
+
+// ── Delta-Defaults ────────────────────────────────────────────────────────────
+constexpr uint16_t DEFAULT_DELTA_DURATION_MS = 2000;  // Mindestdauer Plateau in ms
+constexpr float    DEFAULT_DELTA_TOLERANCE_G = 2.0f;  // Toleranzband in g
 
 // ── Structs ───────────────────────────────────────────────────────────────────
 struct DeviceConfig {
@@ -115,6 +115,8 @@ struct DeviceConfig {
     uint8_t  avgSamples;
     uint16_t offlineBufferSeconds;
     uint8_t  displayHz;
+    uint16_t deltaDurationMs;
+    float    deltaTolerance;
 };
 
 struct SampleSnapshot {
@@ -171,7 +173,7 @@ float factorMid   = 1.0f;   // individueller Kalibrierfaktor Kanal mitte
 float factorFront = 1.0f;   // individueller Kalibrierfaktor Kanal vorne
 volatile uint32_t publishPeriodMs     = 500;
 volatile uint32_t displayPeriodMs     = 500;
-uint8_t           displayMode         = 1;     // 0=groß, 1=Verlauf, 2=FFT
+uint8_t           displayMode         = 0;     // 0=Gewicht+Info, 1=Verlauf
 uint16_t          offlineBufferCapacity = 1200;
 
 // ── Queues ────────────────────────────────────────────────────────────────────
@@ -211,8 +213,15 @@ uint16_t fftSampleCount    = 0;
 float   fftPeakHz          = 0.f;
 float   fftPeakAmp         = 0.f;
 float   fftPeakHold        = 1.f;
-float   fftBarHeights[FFT_BARS] = {};  // normiert 0..1 für OLED
-bool    fftResultReady      = false;
+
+// ── Delta-Zustand ─────────────────────────────────────────────────────────────
+float    deltaActiveRef      = 0.0f;  // aktive Referenz für Delta-Anzeige
+float    deltaPendingPlat    = 0.0f;  // erkanntes, noch nicht aktives Plateau
+bool     deltaPendingReady   = false; // Plateau gepuffert, wartet auf Verlassen
+float    deltaCandidateG     = 0.0f;  // aktueller Plateau-Kandidat
+uint32_t deltaCandidateFrom  = 0;     // Zeitstempel Beginn des Kandidaten
+uint16_t deltaDurationMs     = DEFAULT_DELTA_DURATION_MS;
+float    deltaTolerance      = DEFAULT_DELTA_TOLERANCE_G;
 
 // ── Button ────────────────────────────────────────────────────────────────────
 bool     lastBtnState = HIGH;
@@ -262,10 +271,10 @@ void applyDerivedConfig() {
     displayPeriodMs  = 1000UL / dHz;
 
     uint32_t cap = (uint32_t)SAMPLE_RATE_HZ * (uint32_t)config.offlineBufferSeconds;
-    if (cap < SAMPLE_RATE_HZ)     cap = SAMPLE_RATE_HZ;   // mind. 1 Sekunde
+    if (cap < SAMPLE_RATE_HZ)     cap = SAMPLE_RATE_HZ;
     if (cap > MAX_OFFLINE_BUFFER) cap = MAX_OFFLINE_BUFFER;
     offlineBufferCapacity = (uint16_t)cap;
-    if (offlineBufferCapacity == 0) offlineBufferCapacity = SAMPLE_RATE_HZ; // Notfall-Absicherung
+    if (offlineBufferCapacity == 0) offlineBufferCapacity = SAMPLE_RATE_HZ;
 
     if (offlineWriteIdx >= offlineBufferCapacity ||
         offlineSendIdx  >= offlineBufferCapacity) {
@@ -273,21 +282,30 @@ void applyDerivedConfig() {
         offlineSendIdx  = 0;
     }
 
+    // Delta-Parameter übernehmen
+    if (config.deltaDurationMs >= 200 && config.deltaDurationMs <= 10000)
+        deltaDurationMs = config.deltaDurationMs;
+    if (config.deltaTolerance >= 0.5f && config.deltaTolerance <= 50.0f)
+        deltaTolerance = config.deltaTolerance;
+
     fftSampleCount = 0;
-    fftResultReady = false;
     fftPeakHold    = 1.f;
 }
 
 bool validateConfig(const DeviceConfig& c, String& err) {
     if (c.publishRateHz < 1 || c.publishRateHz > SAMPLE_RATE_HZ)
-        { err = "publishRateHz out of range (1-20)";      return false; }
+        { err = "publishRateHz out of range (1-20)";          return false; }
     if (c.avgSamples < 1 || c.avgSamples > 4)
-        { err = "avgSamples out of range (1-4)";          return false; }
+        { err = "avgSamples out of range (1-4)";              return false; }
     if (c.offlineBufferSeconds < 10 ||
         c.offlineBufferSeconds > MAX_OFFLINE_BUFFER_SECONDS)
         { err = "offlineBufferSeconds out of range (10-180)"; return false; }
     if (c.displayHz < 1 || c.displayHz > 10)
-        { err = "displayHz out of range (1-10)";          return false; }
+        { err = "displayHz out of range (1-10)";              return false; }
+    if (c.deltaDurationMs < 200 || c.deltaDurationMs > 10000)
+        { err = "deltaDurationMs out of range (200-10000)";   return false; }
+    if (c.deltaTolerance < 0.5f || c.deltaTolerance > 50.0f)
+        { err = "deltaTolerance out of range (0.5-50)";       return false; }
     return true;
 }
 
@@ -299,13 +317,18 @@ void loadConfig() {
         prefs.putUChar (NVS_KEY_AVG,     DEFAULT_AVG_SAMPLES);
         prefs.putUShort(NVS_KEY_BUFSEC,  DEFAULT_OFFLINE_BUFFER_SECONDS);
         prefs.putUChar (NVS_KEY_DISPHZ,  DEFAULT_DISPLAY_HZ);
-        prefs.putUChar (NVS_KEY_DISPMOD, 1);
+        prefs.putUChar (NVS_KEY_DISPMOD, 0);
+        prefs.putUShort(NVS_KEY_DELTA_DUR, DEFAULT_DELTA_DURATION_MS);
+        prefs.putFloat (NVS_KEY_DELTA_TOL, DEFAULT_DELTA_TOLERANCE_G);
     }
-    config.publishRateHz        = prefs.getUShort(NVS_KEY_PRATE,  DEFAULT_PUBLISH_RATE_HZ);
-    config.avgSamples           = prefs.getUChar (NVS_KEY_AVG,    DEFAULT_AVG_SAMPLES);
-    config.offlineBufferSeconds = prefs.getUShort(NVS_KEY_BUFSEC, DEFAULT_OFFLINE_BUFFER_SECONDS);
-    config.displayHz            = prefs.getUChar (NVS_KEY_DISPHZ, DEFAULT_DISPLAY_HZ);
-    displayMode                 = prefs.getUChar (NVS_KEY_DISPMOD, 1);
+    config.publishRateHz        = prefs.getUShort(NVS_KEY_PRATE,     DEFAULT_PUBLISH_RATE_HZ);
+    config.avgSamples           = prefs.getUChar (NVS_KEY_AVG,       DEFAULT_AVG_SAMPLES);
+    config.offlineBufferSeconds = prefs.getUShort(NVS_KEY_BUFSEC,    DEFAULT_OFFLINE_BUFFER_SECONDS);
+    config.displayHz            = prefs.getUChar (NVS_KEY_DISPHZ,    DEFAULT_DISPLAY_HZ);
+    config.deltaDurationMs      = prefs.getUShort(NVS_KEY_DELTA_DUR, DEFAULT_DELTA_DURATION_MS);
+    config.deltaTolerance       = prefs.getFloat (NVS_KEY_DELTA_TOL, DEFAULT_DELTA_TOLERANCE_G);
+    displayMode                 = prefs.getUChar (NVS_KEY_DISPMOD,   0);
+    if (displayMode > 1) displayMode = 0;  // Sicherheitsklemmung (war früher max 2)
     prefs.end();
     applyDerivedConfig();
 }
@@ -313,10 +336,12 @@ void loadConfig() {
 bool saveConfig(const DeviceConfig& c) {
     prefs.begin(NVS_NAMESPACE, false);
     bool ok = true;
-    ok &= prefs.putUShort(NVS_KEY_PRATE,  c.publishRateHz)        > 0;
-    ok &= prefs.putUChar (NVS_KEY_AVG,    c.avgSamples)           > 0;
-    ok &= prefs.putUShort(NVS_KEY_BUFSEC, c.offlineBufferSeconds) > 0;
-    ok &= prefs.putUChar (NVS_KEY_DISPHZ, c.displayHz)            > 0;
+    ok &= prefs.putUShort(NVS_KEY_PRATE,     c.publishRateHz)        > 0;
+    ok &= prefs.putUChar (NVS_KEY_AVG,       c.avgSamples)           > 0;
+    ok &= prefs.putUShort(NVS_KEY_BUFSEC,    c.offlineBufferSeconds) > 0;
+    ok &= prefs.putUChar (NVS_KEY_DISPHZ,    c.displayHz)            > 0;
+    ok &= prefs.putUShort(NVS_KEY_DELTA_DUR, c.deltaDurationMs)      > 0;
+    ok &= prefs.putFloat (NVS_KEY_DELTA_TOL, c.deltaTolerance)       > 0;
     prefs.end();
     return ok;
 }
@@ -344,7 +369,7 @@ void sendError(const char* msg) {
 }
 
 void sendConfig(const char* typeName = "config") {
-    StaticJsonDocument<320> d;
+    StaticJsonDocument<384> d;
     d["type"]                  = typeName;
     d["sampleRateHz"]          = SAMPLE_RATE_HZ;
     d["publishRateHz"]         = config.publishRateHz;
@@ -352,6 +377,8 @@ void sendConfig(const char* typeName = "config") {
     d["offlineBufferSeconds"]  = config.offlineBufferSeconds;
     d["offlineBufferCapacity"] = offlineBufferCapacity;
     d["displayHz"]             = config.displayHz;
+    d["deltaDurationMs"]       = config.deltaDurationMs;
+    d["deltaTolerance"]        = config.deltaTolerance;
     d["factorRear"]            = factorRear;
     d["factorMid"]             = factorMid;
     d["factorFront"]           = factorFront;
@@ -435,11 +462,13 @@ void handleCommand(const String& json) {
     }
 
     if (strcmp(type, "setconfig") == 0) {
-        DeviceConfig next         = config;
+                DeviceConfig next         = config;
         next.publishRateHz        = doc["publishRateHz"]        | config.publishRateHz;
         next.avgSamples           = doc["avgSamples"]           | config.avgSamples;
         next.offlineBufferSeconds = doc["offlineBufferSeconds"] | config.offlineBufferSeconds;
         next.displayHz            = doc["displayHz"]            | config.displayHz;
+        next.deltaDurationMs      = doc["deltaDurationMs"]      | config.deltaDurationMs;
+        next.deltaTolerance       = doc["deltaTolerance"]       | config.deltaTolerance;
         String err;
         if (!validateConfig(next, err)) { sendError(err.c_str()); return; }
         ScaleCommand cmd{};
@@ -453,7 +482,8 @@ void handleCommand(const String& json) {
         ScaleCommand cmd{};
         cmd.type      = ScaleCommandType::ApplyConfig;
         cmd.newConfig = { DEFAULT_PUBLISH_RATE_HZ, DEFAULT_AVG_SAMPLES,
-                          DEFAULT_OFFLINE_BUFFER_SECONDS, DEFAULT_DISPLAY_HZ };
+                          DEFAULT_OFFLINE_BUFFER_SECONDS, DEFAULT_DISPLAY_HZ,
+                          DEFAULT_DELTA_DURATION_MS, DEFAULT_DELTA_TOLERANCE_G };
         xQueueSend(scaleCmdQueue, &cmd, 0);
         return;
     }
@@ -655,15 +685,15 @@ void btDisplayTask(void* param) {
         uint32_t now = millis();
 
         // ── Button ────────────────────────────────────────────────────────────
-        bool btn = digitalRead(BUTTON_PIN);
+                bool btn = digitalRead(BUTTON_PIN);
         if (lastBtnState == HIGH && btn == LOW) {
             btnPressedAt = now;
         }
         if (lastBtnState == LOW && btn == HIGH) {
             uint32_t held = now - btnPressedAt;
             if (held >= 1000) {
-                // Langer Druck: Display-Modus weiterschalten
-                displayMode = (displayMode + 1) % 3;
+                // Langer Druck: Display-Modus weiterschalten (0 ↔ 1)
+                displayMode = (displayMode + 1) % 2;
                 prefs.begin(NVS_NAMESPACE, false);
                 prefs.putUChar(NVS_KEY_DISPMOD, displayMode);
                 prefs.end();
@@ -716,7 +746,30 @@ void btDisplayTask(void* param) {
             }
         }
 
-        // ── FFT berechnen wenn Frame voll ─────────────────────────────────────
+        // ── Delta-Algorithmus ─────────────────────────────────────────────────
+        {
+            float    w   = currentWeight;
+            uint32_t now2 = millis();
+
+            if (fabsf(w - deltaCandidateG) <= deltaTolerance) {
+                // Innerhalb des Kandidaten-Toleranzbands
+                if ((uint32_t)(now2 - deltaCandidateFrom) >= deltaDurationMs) {
+                    // Plateau bestätigt → puffern (noch nicht aktiv)
+                    deltaPendingPlat  = deltaCandidateG;
+                    deltaPendingReady = true;
+                }
+            } else {
+                // Plateau verlassen → gepuffertes Plateau jetzt aktivieren
+                if (deltaPendingReady) {
+                    deltaActiveRef    = deltaPendingPlat;
+                    deltaPendingReady = false;
+                }
+                // Neuen Kandidaten starten
+                deltaCandidateG    = w;
+                deltaCandidateFrom = now2;
+            }
+        }
+        
         // ── FFT berechnen wenn Frame voll ─────────────────────────────────────
         if (fftSampleCount >= FFT_SIZE) {
             fftSampleCount = 0;
@@ -890,7 +943,7 @@ void btDisplayTask(void* param) {
             }
         }
 
-        // ── Display ───────────────────────────────────────────────────────────
+                // ── Display ───────────────────────────────────────────────────────────
         if ((uint32_t)(now - lastDisplay) >= displayPeriodMs) {
             lastDisplay = now;
             u8g2.clearBuffer();
@@ -909,15 +962,51 @@ void btDisplayTask(void* param) {
                 else                                     u8g2.drawFrame (120, 1, 7, 7);
             };
 
-            // ── Modus 0: Großes Gewicht ───────────────────────────────────────
+            // ── Modus 0: Gewicht + Delta & Maschinenstufe ────────────────────
             if (displayMode == 0) {
-                u8g2.setFont(u8g2_font_10x20_tf);
+                // Zeile 1: Gewicht
+                u8g2.setFont(u8g2_font_9x15B_tf);
                 uint8_t tw = u8g2.getStrWidth(wBuf);
-                u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, 42, wBuf);
+                u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, 15, wBuf);
                 drawBtIndicator();
 
+                // Trennlinie
+                u8g2.drawHLine(0, VALUE_HEIGHT, DISPLAY_WIDTH);
+
+                // Delta berechnen
+                float delta = currentWeight - deltaActiveRef;
+
+                // Maschinenstufe ermitteln
+                uint8_t kaStage = 0;
+                if (fftPeakHz > 0.1f) {
+                    for (uint8_t k = 0; k < KA_SPEED_COUNT; k++) {
+                        if (fabsf(fftPeakHz - KA_SPEEDS[k]) < 0.15f) {
+                            kaStage = k + 1;
+                            break;
+                        }
+                    }
+                }
+
+                // Zeile 2: Delta + Stufe
+                u8g2.setFont(u8g2_font_6x10_tf);
+                char dBuf[16];
+                if (delta >= 0.0f)
+                    snprintf(dBuf, sizeof(dBuf), "+%.1fg", delta);
+                else
+                    snprintf(dBuf, sizeof(dBuf), "%.1fg", delta);
+
+                char sBuf[8];
+                if (kaStage == 0)
+                    snprintf(sBuf, sizeof(sBuf), "St:aus");
+                else
+                    snprintf(sBuf, sizeof(sBuf), "St:%d", kaStage);
+
+                u8g2.drawStr(0,  DISPLAY_HEIGHT - 1, dBuf);
+                uint8_t sw = u8g2.getStrWidth(sBuf);
+                u8g2.drawStr(DISPLAY_WIDTH - sw, DISPLAY_HEIGHT - 1, sBuf);
+
             // ── Modus 1: Gewicht + Verlaufsgraph ─────────────────────────────
-            } else if (displayMode == 1) {
+            } else {
                 u8g2.setFont(u8g2_font_9x15B_tf);
                 uint8_t tw = u8g2.getStrWidth(wBuf);
                 u8g2.drawStr((DISPLAY_WIDTH - tw) / 2, VALUE_HEIGHT - 3, wBuf);
@@ -942,53 +1031,6 @@ void btDisplayTask(void* param) {
                                       x,     toPixel(dispHist[i1], lo, hi));
                     }
                 }
-
-            // ── Modus 2: FFT-Spektrum (Frontkanal) ───────────────────────────
-            } else {
-                u8g2.setFont(u8g2_font_5x8_tf);
-
-                if (fftResultReady) {
-                    // Balken
-                    for (uint8_t bar = 0; bar < FFT_BARS; bar++) {
-                        uint8_t barH = (uint8_t)(fftBarHeights[bar] * FFT_MAX_BAR_H);
-                        uint8_t x    = bar * FFT_BAR_PX;
-                        uint8_t bw   = FFT_BAR_PX > 1 ? FFT_BAR_PX - 1 : 1;
-                        u8g2.drawBox(x,
-                                     DISPLAY_HEIGHT - FFT_AXIS_H - barH,
-                                     bw, barH);
-                    }
-
-                    // KitchenAid-Stufen als Markierungslinien
-                    for (uint8_t k = 0; k < KA_SPEED_COUNT; k++) {
-                        float    hz  = KA_SPEEDS[k];
-                        uint16_t bin = (uint16_t)(hz / FFT_BIN_RES);
-                        uint8_t  x   = (uint8_t)((float)bin / (FFT_SIZE / 2) * DISPLAY_WIDTH);
-                        if (x < DISPLAY_WIDTH)
-                            u8g2.drawVLine(x, FFT_LABEL_H,
-                                           DISPLAY_HEIGHT - FFT_LABEL_H - FFT_AXIS_H);
-                    }
-
-                    // Peak-Frequenz als Text
-                    char fBuf[16];
-                    snprintf(fBuf, sizeof(fBuf), "%.2fHz", fftPeakHz);
-                    u8g2.drawStr(0, FFT_LABEL_H - 1, fBuf);
-
-                    // Achsenbeschriftung: Nyquist
-                    char nyBuf[8];
-                    snprintf(nyBuf, sizeof(nyBuf), "%dHz", SAMPLE_RATE_HZ / 2);
-                    uint8_t nyW = u8g2.getStrWidth(nyBuf);
-                    u8g2.drawStr(DISPLAY_WIDTH - nyW, DISPLAY_HEIGHT - 1, nyBuf);
-                    u8g2.drawStr(0, DISPLAY_HEIGHT - 1, "0");
-
-                } else {
-                    // Noch kein FFT-Ergebnis: Füllstand anzeigen
-                    char pBuf[16];
-                    snprintf(pBuf, sizeof(pBuf), "FFT %d/%d",
-                             fftSampleCount, FFT_SIZE);
-                    u8g2.drawStr(0, 36, pBuf);
-                    u8g2.drawStr(0, 52, "(Front)");
-                }
-                drawBtIndicator();
             }
 
             u8g2.sendBuffer();
