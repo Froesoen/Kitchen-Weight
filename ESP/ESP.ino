@@ -352,6 +352,7 @@ bool saveConfig(const DeviceConfig& c) {
 // ── BT-Helfer ─────────────────────────────────────────────────────────────────
 void btSend(const String& s) {
     if (!btConnected) return;
+    BT.print(s);
 }
 
 void btSendJson(JsonDocument& doc) {
